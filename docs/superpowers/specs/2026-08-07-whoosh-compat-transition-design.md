@@ -174,6 +174,13 @@ whoosh-compat's own `FieldSpec` design, which validates kind-conditional
 attributes (e.g. JSON requires non-empty `subpaths`) at
 `FieldRegistry.__init__` rather than in the type system.
 
+Footnote for whoever writes `_registry.py`: `FieldRegistry.__init__` forces
+`date_only=True` on _any_ `FieldKind.DATE` spec regardless of what's
+passed, unconditionally — `PublicField.date_only` isn't an independent
+knob for DATE fields the way it might look; it only matters in the sense
+that `created` sets it explicitly for clarity, while `modified`/`added`
+use `FieldKind.DATETIME` instead of relying on that override.
+
 **`subpaths` stays `tuple[str, ...]`, not a nested structure.** Confirmed
 against whoosh-compat's own `FieldRegistry.resolve_json()`: it splits a
 dotted query term on the _first_ dot only and matches the remainder as an
@@ -199,6 +206,25 @@ the literal JSON keys used in `_build_tantivy_doc`'s `doc.add_json(...)`
 calls match `PUBLIC_FIELDS`' `notes`/`custom_fields` `subpaths` exactly, so
 drift between the two is caught rather than silently becoming an
 unqueryable (or silently unindexed) field.
+
+**JSON subpath queries (`notes.*`, `custom_fields.*`) route through
+`index.parse_query()`, not programmatic construction, given paperless's
+pinned tantivy version.** Installed `tantivy-py`'s `Query.term_query`
+cannot resolve a JSON subpath by exact field name — it raises as if the
+field didn't exist. Until
+[tantivy-py#716](https://github.com/quickwit-oss/tantivy-py/pull/716) lands
+and ships, whoosh-compat's `TantivyEmitter._json_paths_supported()` feature-
+detects this per process and falls back to a strictly escaped, single-leaf
+`index.parse_query()` call for just that one leaf (whoosh-compat's README/
+ARCHITECTURE.md call this out as "the JSON subpath carve-out"). Paperless
+pins `tantivy~=0.26.0`, squarely inside the affected range (whoosh-compat's
+`tantivy` extra only requires `tantivy>=0.24`, so nothing prevents this
+combination). Nothing needs to change in this design because of it — the
+carve-out is self-retiring on whoosh-compat's side once tantivy-py catches
+up — but the acceptance corpus's `notes.user:`/`custom_fields.name:` cases
+(PR 4) are exercising that fallback escaping path specifically, not the
+programmatic path every other field goes through, and that's worth knowing
+if one of those cases ever behaves oddly around quoting/escaping.
 
 **Analyzer wiring**: `FieldSpec.analyzer` reuses the same `tantivy
 .TextAnalyzer` objects `_tokenizer.py` already builds (`_paperless_text
@@ -334,7 +360,13 @@ New tests per PR:
   diagnostics _and_ bounds matching what `_dates.py`/`_translate.py`
   compute today, using the still-present legacy code as the oracle.
   Deleted again in PR 4 along with that oracle, superseded by the
-  permanent acceptance corpus.
+  permanent acceptance corpus. This audit is scoped to _parity_ only —
+  whoosh-compat's date grammar is a strict superset of what `_dates.py`
+  accepts today (e.g. `tomorrow`, `now`, `midnight`, `noon`, weekday names
+  like `next monday`), so the migration also grants new date vocabulary for
+  free. That's a nice side effect, not something this PR needs to test or
+  document beyond noting it in the changelog alongside the other behavior
+  changes.
 - **PR 4**:
   - Result-level acceptance module (paperless's analogue of whoosh-compat's
     `test_acceptance_e2e.py`): a real index built via `build_schema()`, the
