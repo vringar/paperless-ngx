@@ -5,6 +5,45 @@ Status: approved, pending spec review
 Related skill: `whoosh-compat-transition`
 Related issue: [stumpylog/whoosh-compat#1](https://github.com/stumpylog/whoosh-compat/issues/1)
 
+> ## Read this before implementing: parts of this spec describe an API that has moved
+>
+> whoosh-compat changed after this spec was written, and more changes are
+> already decided. Re-check anything below against the library's own source
+> and `ARCHITECTURE.md` before writing code from it. The library repo is the
+> source of truth; this document is not.
+>
+> **Wrong today, fix on sight:**
+>
+> | This spec says                                                   | Reality now                                                                                                                                                                                                    |
+> | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | `FieldRegistry.resolve_json(dotted)` (§ JSON subpath resolution) | Gone. There is one resolver: `registry.make_ref(raw) -> FieldRef \| None` interprets a dotted name, and `registry.resolve(ref) -> FieldSpec \| None` looks it up. A dot is interpreted only inside `make_ref`. |
+> | `InvalidDateQuery(d.field, d.raw_value)`                         | `Diagnostic.field` is now a `FieldRef`, not a string. Use `str(d.field)` for the canonical dotted name, or `d.field.name`. The name is canonical, so an aliased query (`type:`) reports `document_type`.       |
+> | AST leaves carrying a field name string                          | Every field-carrying AST leaf now holds a `FieldRef`.                                                                                                                                                          |
+>
+> **Decided upstream, not yet implemented. Write toward these, they will land before this migration executes:**
+>
+> | Behavior                                                                                                                           | Issue                                                       |
+> | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+> | An empty or unknown `default_fields` raises at `parse()`; a `field_boosts` key naming an alias resolves, one naming nothing raises | [#20](https://github.com/stumpylog/whoosh-compat/issues/20) |
+> | A naive `basedate` is rejected rather than read in the host machine's timezone                                                     | [#19](https://github.com/stumpylog/whoosh-compat/issues/19) |
+> | A wildcard on a numeric field produces a diagnostic instead of failing at search time, so the error mapping gains a case           | [#17](https://github.com/stumpylog/whoosh-compat/issues/17) |
+> | A bare JSON field name (`notes:foo`) demotes to a text search rather than raising at emit                                          | [#11](https://github.com/stumpylog/whoosh-compat/issues/11) |
+> | Registry construction rejects exists-target cycles, empty names, duplicate aliases within a spec, and dotted canonical names       | [#21](https://github.com/stumpylog/whoosh-compat/issues/21) |
+>
+> **Still undecided, do not guess:** whether `emit()` keeps its `schema`
+> parameter ([#27](https://github.com/stumpylog/whoosh-compat/issues/27)).
+> This spec calls `emit(ast, index=index, schema=schema, registry=...)` in two
+> places. Check the issue before writing either call site.
+>
+> **Trap:** do not add `fast=True` to the `notes` or `custom_fields` JSON
+> specs. Existence checks against a fast JSON field currently return inverted
+> results ([#7](https://github.com/stumpylog/whoosh-compat/issues/7)), and the
+> error raised for a non-fast JSON field advises marking it fast, which walks
+> straight into that bug. The field table below correctly leaves them non-fast.
+>
+> [#28](https://github.com/stumpylog/whoosh-compat/issues/28) tracks all open
+> upstream work ordered by effort.
+
 ## Summary
 
 Replace paperless-ngx's hand-maintained query-translation layer

@@ -2,6 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Parts of this plan call an API that has moved.** Read the status banner at
+> the top of the spec before starting; it lists what changed, what is decided
+> but not yet implemented, and the one question still open. Known-stale code
+> in this plan, to fix on sight rather than copy:
+>
+> - `registry.resolve_json(...)` no longer exists. Tasks asserting on it (the
+>   registry JSON-subpath tests) must use `registry.make_ref(raw)`, which
+>   returns a `FieldRef` or `None`, and `registry.resolve(ref)` for the spec.
+>   A `None` from `make_ref` is how an unknown field or unknown subpath now
+>   reports itself.
+> - `InvalidDateQuery(d.field, ...)` passes a `FieldRef` where a name is
+>   expected. Use `str(d.field)` or `d.field.name`.
+> - `emit(..., schema=...)` may lose its `schema` parameter; check
+>   [#27](https://github.com/stumpylog/whoosh-compat/issues/27) before writing
+>   those call sites.
+>
+> Verify against the whoosh-compat checkout rather than this plan wherever the
+> two disagree. The library is the source of truth.
+
 **Goal:** Replace paperless-ngx's hand-rolled query-translation layer (`_translate.py`/`_dates.py`) with whoosh-compat, a typed Whoosh-grammar parser that emits programmatic `tantivy.Query` objects directly.
 
 **Architecture:** A shared field-definition table (`_fields.py`) drives both the Tantivy schema (`_schema.py`) and a new `whoosh_compat.FieldRegistry` (`_registry.py`), eliminating drift between what's indexed and what's query-addressable. `parse_user_query()` in `_query.py` becomes `wc.parse() -> diagnostics check -> emit()`, replacing the old regex scan/render pipeline. Landed as four sequential PRs with no feature flag; safety comes from a result-level acceptance test corpus and a date-grammar parity audit against the code being deleted.
