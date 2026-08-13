@@ -17,8 +17,10 @@ whoosh-compat (github.com/stumpylog/whoosh-compat; local checkout usually at `..
 - **Diagnostics before emit:** `whoosh_compat.parse()` never raises on bad input. Check `ParseResult.diagnostics` and map to `SearchQueryError`/`InvalidDateQuery` (HTTP 400) BEFORE calling `emit()`; also catch the emitter's `UnsupportedQueryError` into a 400. Never carry forward the legacy raw-string fallback (`except Exception: query_str = raw_query`) into the new path; it masks integration bugs.
 - **Build typed errors from structured diagnostic data, never by parsing `message`.** Each `Diagnostic` carries `kind`, `startchar`/`endchar`, and `field`/`raw_value`. `message` is human-readable text whose wording can change. For a range that fails on one bound, `raw_value` is the bound that actually failed.
   - `diagnostic.field` is a **`FieldRef`**, not a string: use `str(diagnostic.field)` for the canonical dotted name (`created`, `notes.user`) or `diagnostic.field.name` for the field alone. Note the name is canonical, so an aliased query (`type:`) reports the field it resolves to (`document_type`), and the diagnostic span covers the offending value rather than the field name, so the text the user typed for the field is not recoverable.
-- **The registry has one resolver.** `registry.make_ref(raw)` turns a raw field string into a `FieldRef` or `None` for an unknown field, and `registry.resolve(ref)` returns the spec. There is no `resolve_json()`; a dotted name is interpreted only inside `make_ref`.
+- **The registry has one resolver.** `registry.make_ref(raw)` turns a raw field string into a `FieldRef` or `None` for an unknown field, and `registry.resolve(ref)` returns a `ResolvedField | None`, not a bare spec: read `.spec` for the `FieldSpec`, `.json_path` for the subpath (or `None`), `.is_subpath` and `.dotted_name` are convenience properties. There is no `resolve_json()`; a dotted name is interpreted only inside `make_ref`. Write `resolved = registry.resolve(ref)` then `resolved.spec.kind`, not `spec = registry.resolve(ref)` then `spec.kind`.
 - **`notes` and `custom_fields` are JSON fields** with fixed subpaths (`notes.user`/`notes.note`, `custom_fields.name`/`custom_fields.value`); the registry stays a static, language-keyed singleton, never per-request.
+- **`emit()`'s signature is `emit(node, *, index, registry)`, with no `schema` parameter.** Do not write a call site passing `schema=`. `emit()` calls the library's own `analyze()` pipeline stage internally (token analysis, multitoken resolution, zero-token drop), so paperless-ngx never needs to call `analyze()` itself.
+- **A wildcard/prefix pattern on a JSON subpath reports a parse-time diagnostic**, not a silent whole-field query: `custom_fields.value:abc*` reports `DiagnosticKind.UNSUPPORTED_PATTERN` (the same kind used for a wildcard on a numeric or BOOLEAN_EXISTS field) instead of matching against the wrong encoded bytes. Relevant here because `custom_fields.value` is exactly the kind of JSON subpath a user might expect to pattern-match; the error-mapping code needs a case for `UNSUPPORTED_PATTERN`, not just `BAD_DATE`/`BAD_NUMBER`.
 
 ## Mandatory before deleting old code
 
@@ -42,15 +44,17 @@ Added:
 - One `Multitoken` case nested inside a top-level `OR` (whoosh-compat DIVERGENCES entry on Multitoken.DEFAULT) to prove it does not matter for paperless's data.
 - If acceptance work surfaces a new whoosh-compat divergence, that is a whoosh-compat-repo change (its `differential-triage` skill applies), not a silent paperless workaround.
 
-## Do not mark the JSON fields fast
+## Fast JSON field existence checks
 
-`notes` and `custom_fields` must stay non-fast for now. Existence checks against a **fast** JSON field currently return inverted results (a document that has the field is reported as not having it), because the underlying call does not check subpath columns by default. The unsupported-configuration error raised for a non-fast JSON field advises marking it fast, which walks directly into that bug. Ignore that advice until the upstream issue is fixed, then re-check.
+Existence checks against a fast JSON field work correctly, both whole-field (`notes:*`, which internally requires `json_subpaths=True`) and subpath-scoped (`custom_fields.value:*`, which checks only that subpath's own fast column). Both are covered by whoosh-compat's own test suite; see `DIVERGENCES.md` entry 20 for the exists-strategy design and its subpath-scoping note.
+
+Whether to mark `notes`/`custom_fields` fast is a paperless-ngx-side tradeoff (fast fields cost index size/build time for cheaper existence/range queries) independent of whoosh-compat's correctness — worth a maintainer decision, not assumed by this document.
 
 ## Coordination
 
 - whoosh-compat is pre-1.0: pin an exact version or git SHA; upgrades are deliberate, reviewed changes.
 - JSON subpath emission depends on the installed tantivy-py version (fallback until quickwit-oss/tantivy-py#716 ships). The whoosh-compat repo has a `carve-out-retirement` skill; coordinate tantivy pin bumps with it, in a separate PR from the parser migration.
-- Rollout: settings flag defaulting to the legacy path plus shadow-compare logging (log when old and new paths return different ID sets; sample if cost matters) for one release; delete `_translate.py`/`_dates.py` only after the flag defaults to the new path with no material reports.
+- Rollout: no feature flag, no shadow-compare period. Safety comes from the date-grammar parity audit and the result-level acceptance corpus instead; `_translate.py`/`_dates.py` are deleted once those are green.
 
 ## Common mistakes
 

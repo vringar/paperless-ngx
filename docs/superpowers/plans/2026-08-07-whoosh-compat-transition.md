@@ -2,21 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Parts of this plan call an API that has moved.** Read the status banner at
-> the top of the spec before starting; it lists what changed, what is decided
-> but not yet implemented, and the one question still open. Known-stale code
-> in this plan, to fix on sight rather than copy:
->
-> - `registry.resolve_json(...)` no longer exists. Tasks asserting on it (the
->   registry JSON-subpath tests) must use `registry.make_ref(raw)`, which
->   returns a `FieldRef` or `None`, and `registry.resolve(ref)` for the spec.
->   A `None` from `make_ref` is how an unknown field or unknown subpath now
->   reports itself.
-> - `InvalidDateQuery(d.field, ...)` passes a `FieldRef` where a name is
->   expected. Use `str(d.field)` or `d.field.name`.
-> - `emit(..., schema=...)` may lose its `schema` parameter; check
->   [#27](https://github.com/stumpylog/whoosh-compat/issues/27) before writing
->   those call sites.
+> **API reference used by this plan.** The design spec's API reference
+> (top of `docs/superpowers/specs/2026-08-07-whoosh-compat-transition-design.md`)
+> has the full shape; the points that matter most while executing the tasks
+> below: the one resolver is `registry.make_ref(raw) -> FieldRef | None` (a
+> `None` return is how an unknown field or unknown subpath reports itself)
+> plus `registry.resolve(ref) -> ResolvedField | None` — read `.spec` off the
+> result for the `FieldSpec`, `.json_path` for the subpath. `Diagnostic.field`
+> is a `FieldRef`, not a string: call `str(d.field)` (or `d.field.name`)
+> before passing it to `InvalidDateQuery`/`InvalidNumberQuery`, whose own
+> constructors expect `str | None`. `emit()`'s signature is `emit(node, *,
+index, registry)`, with no `schema` parameter: every `tantivy_emit(...)`
+> call site in this plan drops `schema=...`. `DiagnosticKind` has four
+> members: `BAD_DATE`, `BAD_NUMBER`, `TOO_DEEP`, `UNSUPPORTED_PATTERN` (the
+> last fires for a wildcard/prefix pattern on a numeric field, a
+> `BOOLEAN_EXISTS` field, or a JSON subpath, e.g. `custom_fields.value:abc*`).
 >
 > Verify against the whoosh-compat checkout rather than this plan wherever the
 > two disagree. The library is the source of truth.
@@ -451,74 +451,97 @@ class TestFieldRegistry:
 
     def test_type_alias_resolves_to_document_type(self) -> None:
         registry = get_field_registry(None)
-        spec = registry.resolve("type")
-        assert spec is not None
-        assert spec.name == "document_type"
+        ref = registry.make_ref("type")
+        assert ref is not None
+        resolved = registry.resolve(ref)
+        assert resolved is not None
+        assert resolved.spec.name == "document_type"
 
     def test_path_alias_resolves_to_storage_path(self) -> None:
         registry = get_field_registry(None)
-        spec = registry.resolve("path")
-        assert spec is not None
-        assert spec.name == "storage_path"
+        ref = registry.make_ref("path")
+        assert ref is not None
+        resolved = registry.resolve(ref)
+        assert resolved is not None
+        assert resolved.spec.name == "storage_path"
 
     def test_notes_json_subpaths_resolve(self) -> None:
         registry = get_field_registry(None)
-        resolved = registry.resolve_json("notes.user")
+        ref = registry.make_ref("notes.user")
+        assert ref is not None
+        resolved = registry.resolve(ref)
         assert resolved is not None
-        spec, subpath = resolved
-        assert spec.name == "notes"
-        assert subpath == "user"
+        assert resolved.spec.name == "notes"
+        assert resolved.json_path == "user"
+        assert resolved.is_subpath is True
 
     def test_custom_fields_json_subpaths_resolve(self) -> None:
         registry = get_field_registry(None)
-        assert registry.resolve_json("custom_fields.name") is not None
-        assert registry.resolve_json("custom_fields.value") is not None
+        for raw in ("custom_fields.name", "custom_fields.value"):
+            ref = registry.make_ref(raw)
+            assert ref is not None
+            assert registry.resolve(ref) is not None
 
     def test_unregistered_json_subpath_does_not_resolve(self) -> None:
         registry = get_field_registry(None)
-        assert registry.resolve_json("notes.bogus") is None
+        # An unregistered subpath is not even a valid FieldRef: make_ref
+        # returns None for a dotted name whose subpath isn't registered
+        # (it doesn't produce a ref for resolve() to then reject).
+        assert registry.make_ref("notes.bogus") is None
 
     def test_tag_is_comma_values(self) -> None:
         registry = get_field_registry(None)
-        spec = registry.resolve("tag")
-        assert spec is not None
-        assert spec.comma_values is True
+        ref = registry.make_ref("tag")
+        assert ref is not None
+        resolved = registry.resolve(ref)
+        assert resolved is not None
+        assert resolved.spec.comma_values is True
 
     def test_created_is_date_kind(self) -> None:
         registry = get_field_registry(None)
-        spec = registry.resolve("created")
-        assert spec is not None
-        assert spec.kind is FieldKind.DATE
-        assert spec.date_only is True
+        ref = registry.make_ref("created")
+        assert ref is not None
+        resolved = registry.resolve(ref)
+        assert resolved is not None
+        assert resolved.spec.kind is FieldKind.DATE
+        assert resolved.spec.date_only is True
 
     def test_analyzer_lowercases_and_ascii_folds(self) -> None:
         # title uses the paperless_text analyzer: simple -> remove_long ->
         # lowercase -> ascii_fold [-> stemmer]. With no language configured
         # (None), no stemmer runs, so "Café" folds to the single token "cafe".
         registry = get_field_registry(None)
-        spec = registry.resolve("title")
-        assert spec is not None
-        assert spec.analyzer is not None
-        assert spec.analyzer("Café") == ["cafe"]
+        ref = registry.make_ref("title")
+        assert ref is not None
+        resolved = registry.resolve(ref)
+        assert resolved is not None
+        assert resolved.spec.analyzer is not None
+        assert resolved.spec.analyzer("Café") == ["cafe"]
 
     def test_checksum_analyzer_is_identity_single_token(self) -> None:
         # checksum uses the raw tokenizer at index time (no splitting).
         registry = get_field_registry(None)
-        spec = registry.resolve("checksum")
-        assert spec is not None
-        assert spec.analyzer("ABC-123") == ["ABC-123"]
+        ref = registry.make_ref("checksum")
+        assert ref is not None
+        resolved = registry.resolve(ref)
+        assert resolved is not None
+        assert resolved.spec.analyzer("ABC-123") == ["ABC-123"]
 
     def test_pattern_normalizer_is_ascii_fold_only_no_stemming(self) -> None:
         registry = get_field_registry(None)
-        spec = registry.resolve("title")
-        assert spec is not None
-        assert spec.pattern_normalizer is not None
+        ref = registry.make_ref("title")
+        assert ref is not None
+        resolved = registry.resolve(ref)
+        assert resolved is not None
+        assert resolved.spec.pattern_normalizer is not None
         # "running" must NOT be stemmed to "run" by the pattern normalizer,
         # only case/accent-folded — even with English stemming configured.
         registry_en = get_field_registry("en")
-        spec_en = registry_en.resolve("title")
-        assert spec_en is not None
-        assert spec_en.pattern_normalizer("Running") == "running"
+        ref_en = registry_en.make_ref("title")
+        assert ref_en is not None
+        resolved_en = registry_en.resolve(ref_en)
+        assert resolved_en is not None
+        assert resolved_en.spec.pattern_normalizer("Running") == "running"
 
     def test_registry_is_cached_per_language(self) -> None:
         a = get_field_registry("en")
@@ -685,7 +708,7 @@ git commit -m "test(search): guard JSON subpath/dict-key coupling between _field
 
 ### Task 6: Write `test_date_grammar_parity.py`
 
-**Suggested executor:** `agentType: python-pro`, `model: sonnet` — correctness-critical, comparing two independent date-computation code paths; needs care transcribing every keyword/unit exactly.
+**Suggested executor:** `agentType: python-pro`, `model: sonnet` — needs care transcribing every keyword/unit exactly, and reading the grammar closely enough to phrase each case correctly.
 
 **Files:**
 
@@ -693,18 +716,18 @@ git commit -m "test(search): guard JSON subpath/dict-key coupling between _field
 
 **Interfaces:**
 
-- Consumes: `_DATE_KEYWORDS` from `documents.search._dates`; `_UNIT_ALIASES`, `_bound_datetimes`, `translate_scalar`, `translate_range` from `documents.search._translate` (both still present at this point in the plan — deleted only in Task 14); `get_field_registry` from `documents.search._registry` (Task 4); `wc.parse` from `whoosh_compat`.
+- Consumes: `_DATE_KEYWORDS` from `documents.search._dates`; `_UNIT_ALIASES` from `documents.search._translate` (both still present at this point in the plan — deleted only in Task 14); `get_field_registry` from `documents.search._registry` (Task 4); `wc.parse` from `whoosh_compat`.
 
 - [ ] **Step 1: Write the test**
 
-This test has no "make it pass" implementation step of its own — it's a differential test against two systems that already exist. Read `src/documents/search/_dates.py` and `src/documents/search/_translate.py` in full before writing this (both already read earlier in this session) to transcribe every accepted keyword/unit exactly — do not paraphrase or abbreviate the list.
+This test has no "make it pass" implementation step of its own — it's a coverage audit against a system that already exists. Read `src/documents/search/_dates.py` and `src/documents/search/_translate.py` in full before writing this (both already read earlier in this session) to transcribe every accepted keyword/unit exactly — do not paraphrase or abbreviate the list. Every case here asks only "does whoosh-compat accept this input at all" (the real migration-safety question — an existing saved view must not start failing to parse); it never asserts on the bounds or AST shape whoosh-compat parses a keyword to, since that's whoosh-compat's own differential-testing responsibility against a real whoosh oracle, not paperless's to re-verify against the legacy code being deleted.
 
 ```python
 # src/documents/tests/search/test_date_grammar_parity.py
-"""Transitional differential test: every date keyword/unit _dates.py and
-_translate.py accept today must parse cleanly through whoosh-compat with
-matching bounds, before those modules are deleted (Task 14). This test is
-deleted in the same task as its oracle — superseded by the permanent
+"""Transitional coverage audit: every date keyword/unit _dates.py and
+_translate.py accept today must still parse cleanly (no diagnostics)
+through whoosh-compat, before those modules are deleted (Task 14). This
+test is deleted in the same task as the legacy code it audits — superseded by the permanent
 result-level acceptance corpus (Task 12).
 """
 
@@ -720,7 +743,6 @@ import whoosh_compat as wc
 from documents.search._dates import _DATE_KEYWORDS
 from documents.search._registry import get_field_registry
 from documents.search._translate import _UNIT_ALIASES
-from documents.search._translate import _bound_datetimes
 
 FROZEN_NOW = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
 
@@ -832,47 +854,19 @@ def test_range_forms_parse_without_diagnostics(range_query, registry) -> None:
             tz=UTC,
         )
     assert result.diagnostics == (), f"{range_query!r}: {result.diagnostics}"
-
-
-@pytest.mark.parametrize("keyword", sorted(_DATE_KEYWORDS))
-def test_keyword_bounds_match_legacy_translate_scalar(keyword, registry) -> None:
-    """Cross-check computed bounds, not just successful parse.
-
-    Compares whoosh-compat's resolved DateRange against what
-    _translate.py's translate_scalar() computes for the same keyword today —
-    using the legacy code as the oracle while it's still present.
-    """
-    from documents.search import _translate
-
-    with time_machine.travel(FROZEN_NOW, tick=False):
-        legacy_str = _translate.translate_scalar("created", keyword, UTC)
-        result = wc.parse(
-            f'created:"{keyword}"' if " " in keyword else f"created:{keyword}",
-            registry=registry,
-            default_fields=["content"],
-            tz=UTC,
-        )
-    assert result.diagnostics == ()
-    # A single fielded date term parses straight to a top-level DateRange —
-    # confirmed directly: `wc.parse("created:today", ...).ast` returns
-    # `DateRange(startchar=8, endchar=13, field='created', lo=..., hi=...,
-    # incl_lo=True, incl_hi=False)` with no wrapping node, and the same
-    # holds for a quoted multi-word keyword like "previous week".
-    date_range = result.ast
-    # Extract the ISO bounds the legacy string encodes, e.g.
-    # "created:[2026-06-15T00:00:00Z TO 2026-06-16T00:00:00Z}" -> both ends.
-    # Confirmed format directly: translate_scalar("created", "today", UTC)
-    # returns 'created:[2026-08-09T00:00:00Z TO 2026-08-10T00:00:00Z}' (the
-    # half-open '}' close, not ']' - the regex below already handles both).
-    import re
-
-    m = re.search(r"\[(\S+) TO (\S+)[\]}]", legacy_str)
-    assert m is not None, f"unexpected legacy format: {legacy_str!r}"
-    legacy_lo = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
-    legacy_hi = datetime.fromisoformat(m.group(2).replace("Z", "+00:00"))
-    assert date_range.lo == legacy_lo, (keyword, date_range.lo, legacy_lo)
-    assert date_range.hi == legacy_hi, (keyword, date_range.hi, legacy_hi)
 ```
+
+Coverage only, deliberately: each test above asks "does whoosh-compat
+accept this keyword/form at all" (the real migration-safety question —
+does an existing saved view stop parsing), never "does it compute the
+same bounds/AST shape whoosh-compat would compute on its own." The
+latter is whoosh-compat's own differential-testing responsibility
+against a real whoosh oracle (`tests/differential/`,
+`tests/test_parser_dates.py` in that repo), not something to re-verify
+here against `_translate.py` as a second, weaker oracle. If a specific
+keyword's actual search _behavior_ needs confidence beyond "it parses,"
+express that as a real-document, matched-ID case in the Task 12
+acceptance corpus instead.
 
 - [ ] **Step 2: Run the test suite and record results**
 
@@ -1102,40 +1096,35 @@ git commit -m "refactor(search): move SearchQueryError family to _query.py, add 
 
 ---
 
-### Task 9: Verify whoosh-compat issue #1 has landed
+### Task 9: Confirm `Diagnostic.field`/`raw_value` shape before wiring error mapping
 
-**Suggested executor:** `agentType: general-purpose`, `model: haiku` — a status check, not implementation.
+**Suggested executor:** `agentType: general-purpose`, `model: haiku` — a status/shape check, not implementation.
 
-**Files:** none in paperless-ngx; read-only check against `/tank/users/trenton/projects/paperless/whoosh-compat`
+**Files:** none in paperless-ngx; read-only check against the whoosh-compat checkout.
 
 **Interfaces:** N/A — gate for Task 10.
 
-- [ ] **Step 1: Check whether `Diagnostic` has `field`/`raw_value`**
+Task 10's error-mapping code needs to match `Diagnostic`'s actual field
+shapes exactly, since `field` is a `FieldRef`, not a plain `str | None`.
+Confirm both `Diagnostic`'s fields and `DiagnosticKind`'s members directly
+against the checkout before writing that code.
 
-Run: `rg -n "class Diagnostic" -A 10 /tank/users/trenton/projects/paperless/whoosh-compat/src/whoosh_compat/errors.py`
-
-- [ ] **Step 2: If not landed, implement it now (this is [stumpylog/whoosh-compat#1](https://github.com/stumpylog/whoosh-compat/issues/1))**
-
-Working directory: `/tank/users/trenton/projects/paperless/whoosh-compat`. Add `field: str | None = None` and `raw_value: str | None = None` to the `Diagnostic` dataclass in `src/whoosh_compat/errors.py`. Thread them through at the three construction sites documented in the issue:
-
-1. `src/whoosh_compat/parser/dateparse.py`'s `_error()` method — add a `field: str` parameter, pass `raw_value=text`; update its one call site in `text_to_node()` (`self._error(node, text)` → `self._error(node, text, field=spec.name)`).
-2. `src/whoosh_compat/parser/default.py`'s `term_query()` BAD_NUMBER `Diagnostic(...)` construction — add `field=fieldname, raw_value=text`.
-3. `src/whoosh_compat/parser/default.py`'s `_coerce_range_bound()` BAD_NUMBER `Diagnostic(...)` construction — add `field=fieldname, raw_value=text`.
-
-Follow that repo's own test conventions for this change (add/update unit tests asserting the new fields are populated at each site). Commit there, following that repo's commit style. Close issue #1 with a reference to the commit once merged.
-
-- [ ] **Step 3: Confirm from the paperless-ngx side**
+- [ ] **Step 1: Confirm `Diagnostic`'s fields and `field`'s type**
 
 Run: `cd src && uv run python -c "
 from whoosh_compat.errors import Diagnostic
 import dataclasses
-fields = {f.name for f in dataclasses.fields(Diagnostic)}
-assert 'field' in fields and 'raw_value' in fields, fields
-print('OK:', fields)
+fields = {f.name: f.type for f in dataclasses.fields(Diagnostic)}
+print(fields)
 "`
-Expected: prints `OK: {'message', 'kind', 'startchar', 'endchar', 'field', 'raw_value'}` (order may vary)
+Expected: a `field` key present. `Diagnostic.field` is typed `FieldRef | None`, not `str | None` — Task 10's `_single_diagnostic_to_error` must call `str(d.field)` (or `d.field.name`) to get a name, never pass the `FieldRef` straight into `InvalidDateQuery`/`InvalidNumberQuery`, whose own constructors expect `str | None`.
 
-No commit in paperless-ngx for this task — it's a prerequisite check/implementation entirely in the other repo.
+- [ ] **Step 2: Confirm `DiagnosticKind`'s members**
+
+Run: `cd src && uv run python -c "from whoosh_compat.errors import DiagnosticKind; print(list(DiagnosticKind))"`
+Expected: `BAD_DATE`, `BAD_NUMBER`, `TOO_DEEP`, `UNSUPPORTED_PATTERN`. Task 10's `_single_diagnostic_to_error` branches on `BAD_DATE`/`BAD_NUMBER` and falls through to a generic `SearchQueryError(d.message)` for the other two — confirm that fallthrough is still adequate (or add typed handling) now that `UNSUPPORTED_PATTERN` is reachable for a wildcard on `asn`/`page_count`/`num_notes` or on `custom_fields.value`/`notes.user`-shaped subpaths.
+
+No commit in paperless-ngx for this task — it's a read-only confirmation gating Task 10.
 
 ---
 
@@ -1279,7 +1268,7 @@ def parse_user_query(
         raise _diagnostics_to_error(result.diagnostics)
 
     try:
-        exact = tantivy_emit(result.ast, index=index, schema=index.schema, registry=registry)
+        exact = tantivy_emit(result.ast, index=index, registry=registry)
     except UnsupportedQueryError as e:
         raise SearchQueryError(str(e)) from e
 
@@ -1317,10 +1306,17 @@ def _diagnostics_to_error(diagnostics: tuple[Diagnostic, ...]) -> SearchQueryErr
 
 
 def _single_diagnostic_to_error(d: Diagnostic) -> SearchQueryError:
+    # d.field is a FieldRef, not a str: str(d.field) gives the canonical
+    # dotted name (an aliased query, e.g. type:, reports document_type).
+    field_name = str(d.field) if d.field is not None else None
     if d.kind is DiagnosticKind.BAD_DATE:
-        return InvalidDateQuery(d.field, d.raw_value)
+        return InvalidDateQuery(field_name, d.raw_value)
     if d.kind is DiagnosticKind.BAD_NUMBER:
-        return InvalidNumberQuery(d.field, d.raw_value)
+        return InvalidNumberQuery(field_name, d.raw_value)
+    # TOO_DEEP and UNSUPPORTED_PATTERN (e.g. a wildcard on asn/page_count/
+    # num_notes, or on a custom_fields.*/notes.* subpath) fall through to
+    # the generic message; see Task 9's note on whether either warrants its
+    # own typed subclass.
     return SearchQueryError(d.message)
 ```
 
@@ -1466,7 +1462,6 @@ from datetime import UTC
 from datetime import datetime
 
 import pytest
-import tantivy
 import time_machine
 
 from documents.models import CustomField
@@ -1475,8 +1470,6 @@ from documents.models import Document
 from documents.models import Note
 from documents.search._backend import TantivyBackend
 from documents.search._query import parse_user_query
-from documents.search._schema import build_schema
-from documents.search._tokenizer import register_tokenizers
 
 pytestmark = [pytest.mark.search, pytest.mark.django_db]
 
@@ -1666,45 +1659,11 @@ class TestMultitokenInNestedOr:
         backend.add_or_update(doc_b)
         matched = _matched_ids(backend, 'tag:"multi word tag" OR title:B')
         assert matched == {doc_a.pk, doc_b.pk}
-
-
-class TestParseUserQueryResultLevel:
-    """Ported from test_query.py's TestParseUserQuery — see Task 10."""
-
-    @pytest.fixture
-    def query_index(self) -> tantivy.Index:
-        schema = build_schema()
-        idx = tantivy.Index(schema, path=None)
-        register_tokenizers(idx, "")
-        return idx
-
-    @pytest.mark.parametrize(
-        "raw_query",
-        [
-            pytest.param("created:2020", id="created_year_scalar"),
-            pytest.param(
-                "created:[20200101 TO 20201231]",
-                id="created_8digit_bracket_range",
-            ),
-            pytest.param("title:x,created:[2020 TO 2021]", id="title_comma_created_range"),
-            pytest.param("type:invoice", id="type_alias"),
-            pytest.param("created:previous week", id="created_previous_week"),
-            pytest.param(
-                "created:[2026-01-01T00:00:00Z TO 2026-06-01T00:00:00Z]",
-                id="created_iso_range",
-            ),
-        ],
-    )
-    def test_advanced_search_queries_do_not_raise(
-        self,
-        query_index: tantivy.Index,
-        raw_query: str,
-    ) -> None:
-        with time_machine.travel(FROZEN_NOW, tick=False):
-            assert isinstance(parse_user_query(query_index, raw_query, UTC), tantivy.Query)
 ```
 
-The module-level `pytestmark = [pytest.mark.search, pytest.mark.django_db]` (confirmed as the real convention against `test_backend.py`'s identical line) covers every class in the file, including `TestParseUserQueryResultLevel` even though it doesn't touch the ORM — harmless, `django_db` only makes database access available, it doesn't force any given test to use it.
+Not ported forward: `test_query.py`'s existing `TestParseUserQuery.test_advanced_search_queries_do_not_raise` (a parametrized `isinstance(..., tantivy.Query)` check over a handful of advanced query shapes) is dropped rather than carried into this module. It never indexes a document or asserts a matched-ID set, so keeping it here would be the one class in this file testing nothing paperless-specific — the underlying guarantee it's checking (a diagnostics-free parse never raises anything but `UnsupportedQueryError` at emit) is whoosh-compat's own tested contract, not paperless's to re-verify with generic query strings. Task 10's kept tests already cover paperless's own specific "does not raise" behaviors (fuzzy mode, dash-query robustness); every other query shape either becomes a real result-level case above or is trusted to whoosh-compat's own suite.
+
+The module-level `pytestmark = [pytest.mark.search, pytest.mark.django_db]` (confirmed as the real convention against `test_backend.py`'s identical line) covers every class in the file.
 
 - [ ] **Step 2: Run the acceptance suite**
 
@@ -1713,7 +1672,7 @@ Expected: PASS, all cases. If `TestIssue13568BracketWildcard` fails, that's the 
 
 - [ ] **Step 3: Remove the internals-only classes from `test_query.py`**
 
-Per the design spec's test-migration table, delete these classes entirely from `src/documents/tests/search/test_query.py` (they test `_translate.py`/`_dates.py` internals or intermediate query strings, both gone once Task 14 runs): `TestCreatedDateField`, `TestDateTimeFields`, `TestWhooshQueryRewriting`, `TestYearRangeRewriting`, `TestNonDateFieldsNotRewritten`, `TestPassthrough`, `TestNormalizeQuery`. Also remove `TestParseUserQuery`'s `test_advanced_search_queries_do_not_raise` (now duplicated in `test_acceptance.py`'s `TestParseUserQueryResultLevel`) — keep the rest of `TestParseUserQuery` (the exception-path tests from Task 10, `test_returns_tantivy_query`, `test_fuzzy_mode_does_not_raise`, `test_date_rewriting_applied_before_tantivy_parse`, `test_spaced_dash_queries_do_not_raise`, `test_invalid_date_propagates_not_swallowed`) — those aren't duplicated, they cover different behavior (fuzzy mode, dash-query robustness, exception propagation).
+Per the design spec's test-migration table, delete these classes entirely from `src/documents/tests/search/test_query.py` (they test `_translate.py`/`_dates.py` internals or intermediate query strings, both gone once Task 14 runs): `TestCreatedDateField`, `TestDateTimeFields`, `TestWhooshQueryRewriting`, `TestYearRangeRewriting`, `TestNonDateFieldsNotRewritten`, `TestPassthrough`, `TestNormalizeQuery`. Also remove `TestParseUserQuery`'s `test_advanced_search_queries_do_not_raise` outright — it never indexed a document or asserted a matched-ID set, checking only that a diagnostics-free parse doesn't raise, which is whoosh-compat's own tested contract, not something paperless needs to re-verify with generic query strings. Keep the rest of `TestParseUserQuery` (the exception-path tests from Task 10, `test_returns_tantivy_query`, `test_fuzzy_mode_does_not_raise`, `test_date_rewriting_applied_before_tantivy_parse`, `test_spaced_dash_queries_do_not_raise`, `test_invalid_date_propagates_not_swallowed`) — those cover paperless-specific behavior (fuzzy mode, dash-query robustness, exception propagation), not generic library coverage.
 
 Keep `TestParseSimpleTextHighlightQuery` and `TestPermissionFilter` in `test_query.py` entirely unchanged — neither ever touched `translate_query`.
 

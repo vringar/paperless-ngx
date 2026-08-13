@@ -1,48 +1,61 @@
 # whoosh-compat transition design
 
 Date: 2026-08-07
-Status: approved, pending spec review
+Status: approved
 Related skill: `whoosh-compat-transition`
-Related issue: [stumpylog/whoosh-compat#1](https://github.com/stumpylog/whoosh-compat/issues/1)
 
-> ## Read this before implementing: parts of this spec describe an API that has moved
+> **API reference used by this design.** `FieldRegistry` exposes one
+> resolution path: `registry.make_ref(raw) -> FieldRef | None` interprets a
+> raw, possibly dotted field string (an unknown field or an unknown subpath
+> both return `None`), and `registry.resolve(ref) -> ResolvedField | None`
+> looks up the resolved ref. `ResolvedField` carries `.spec` (the
+> `FieldSpec`), `.json_path` (the subpath, or `None`), `.is_subpath`, and
+> `.dotted_name` — read `resolved.spec.kind`, not `spec.kind` off a bare
+> `FieldSpec`. `Diagnostic.field` is a `FieldRef`, not a string: use
+> `str(d.field)` for the canonical dotted name, or `d.field.name` for the
+> field alone (the name is canonical, so an aliased query like `type:`
+> reports `document_type`). Every field-carrying AST leaf holds a `FieldRef`.
+> `emit()`'s signature is `emit(node, *, index, registry) -> tantivy.Query`,
+> with no `schema` parameter; it calls the library's own `analyze()` pipeline
+> stage internally (token analysis, multitoken resolution, zero-token drop)
+> before visiting the tree, so this design's call sites never invoke
+> `analyze()` themselves. `FieldSpec.subpaths` is stored internally as
+> `Mapping[str, SubpathSpec]`, though construction still accepts a plain
+> `tuple[str, ...]` as sugar and normalizes it automatically — this design's
+> own `PublicField.subpaths: tuple[str, ...]` (below) passes a tuple into
+> `FieldSpec(..., subpaths=...)` and needs nothing further.
+> `DiagnosticKind` has four members: `BAD_DATE`, `BAD_NUMBER`, `TOO_DEEP`, and
+> `UNSUPPORTED_PATTERN`; the error-mapping code below needs cases for all
+> four.
 >
-> whoosh-compat changed after this spec was written, and more changes are
-> already decided. Re-check anything below against the library's own source
-> and `ARCHITECTURE.md` before writing code from it. The library repo is the
-> source of truth; this document is not.
+> A few library behaviors worth knowing before writing code against it:
+> `parse()` validates its own configuration eagerly — an empty or unknown
+> `default_fields`, or a `field_boosts` key that resolves to neither a known
+> field nor an alias, raises `ValueError` at the `parse()` call itself, and an
+> alias in either argument resolves normally. A naive `basedate` is rejected
+> (`ValueError`) rather than silently read in the host machine's local
+> timezone; pass an aware datetime. A wildcard/prefix pattern on a numeric
+> (`U64`) field, a `BOOLEAN_EXISTS` field, or a JSON subpath produces a
+> parse-time `Diagnostic(kind=UNSUPPORTED_PATTERN)` instead of silently
+> mangling to an exact-match term or matching the wrong encoded bytes — this
+> is directly relevant to `custom_fields.value`: a user typing
+> `custom_fields.value:abc*` gets a diagnostic, not a query that silently
+> matches the wrong documents. A bare JSON field name with no subpath
+> (`notes:foo`) demotes to an ordinary text search for the literal string,
+> the same treatment an unknown field or unknown subpath gets. Registry
+> construction validates its input eagerly: exists-target cycles, empty
+> field/alias names, duplicate aliases, dotted canonical names,
+> invalid-character or empty JSON subpath strings, and a subpath that would
+> shadow a registered plain field are all rejected at `FieldRegistry.__init__`
+> with an actionable message, not deferred to query time.
 >
-> **Wrong today, fix on sight:**
->
-> | This spec says                                                   | Reality now                                                                                                                                                                                                    |
-> | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-> | `FieldRegistry.resolve_json(dotted)` (§ JSON subpath resolution) | Gone. There is one resolver: `registry.make_ref(raw) -> FieldRef \| None` interprets a dotted name, and `registry.resolve(ref) -> FieldSpec \| None` looks it up. A dot is interpreted only inside `make_ref`. |
-> | `InvalidDateQuery(d.field, d.raw_value)`                         | `Diagnostic.field` is now a `FieldRef`, not a string. Use `str(d.field)` for the canonical dotted name, or `d.field.name`. The name is canonical, so an aliased query (`type:`) reports `document_type`.       |
-> | AST leaves carrying a field name string                          | Every field-carrying AST leaf now holds a `FieldRef`.                                                                                                                                                          |
->
-> **Decided upstream, not yet implemented. Write toward these, they will land before this migration executes:**
->
-> | Behavior                                                                                                                           | Issue                                                       |
-> | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-> | An empty or unknown `default_fields` raises at `parse()`; a `field_boosts` key naming an alias resolves, one naming nothing raises | [#20](https://github.com/stumpylog/whoosh-compat/issues/20) |
-> | A naive `basedate` is rejected rather than read in the host machine's timezone                                                     | [#19](https://github.com/stumpylog/whoosh-compat/issues/19) |
-> | A wildcard on a numeric field produces a diagnostic instead of failing at search time, so the error mapping gains a case           | [#17](https://github.com/stumpylog/whoosh-compat/issues/17) |
-> | A bare JSON field name (`notes:foo`) demotes to a text search rather than raising at emit                                          | [#11](https://github.com/stumpylog/whoosh-compat/issues/11) |
-> | Registry construction rejects exists-target cycles, empty names, duplicate aliases within a spec, and dotted canonical names       | [#21](https://github.com/stumpylog/whoosh-compat/issues/21) |
->
-> **Still undecided, do not guess:** whether `emit()` keeps its `schema`
-> parameter ([#27](https://github.com/stumpylog/whoosh-compat/issues/27)).
-> This spec calls `emit(ast, index=index, schema=schema, registry=...)` in two
-> places. Check the issue before writing either call site.
->
-> **Trap:** do not add `fast=True` to the `notes` or `custom_fields` JSON
-> specs. Existence checks against a fast JSON field currently return inverted
-> results ([#7](https://github.com/stumpylog/whoosh-compat/issues/7)), and the
-> error raised for a non-fast JSON field advises marking it fast, which walks
-> straight into that bug. The field table below correctly leaves them non-fast.
->
-> [#28](https://github.com/stumpylog/whoosh-compat/issues/28) tracks all open
-> upstream work ordered by effort.
+> Fast-field existence checks against a JSON field are correct, both for
+> whole-field existence (`notes:*`) and the per-subpath case
+> (`custom_fields.value:*`, which checks only that subpath's own fast
+> column). Marking `notes`/`custom_fields` fast is therefore a plain
+> paperless-ngx-side index-size/query-cost tradeoff, independent of
+> whoosh-compat correctness — worth a maintainer decision, not something this
+> document settles.
 
 ## Summary
 
@@ -78,8 +91,9 @@ ParseResult(ast, diagnostics)
     │  subclass(es) → HTTP 400 (never just the first diagnostic)
     │
     ▼
-emit(ast, index=index, schema=schema, registry=FIELD_REGISTRY)
-    │  (raises UnsupportedQueryError → mapped to SearchQueryError → 400,
+emit(ast, index=index, registry=FIELD_REGISTRY)
+    │  (calls whoosh-compat's own analyze() pipeline stage internally, then
+    │   raises UnsupportedQueryError → mapped to SearchQueryError → 400,
     │   for constructs that parse but can't execute against tantivy)
     ▼
 tantivy.Query
@@ -123,13 +137,12 @@ already proven correct in isolation.
    `test_translate.py` and the internals-testing classes in `test_query.py`,
    update `docs/usage.md` and changelog.
 
-**Prerequisite, whoosh-compat repo** (tracked as
-[stumpylog/whoosh-compat#1](https://github.com/stumpylog/whoosh-compat/issues/1),
-lands before PR 4 starts its diagnostics-mapping work): add `field: str |
-None` and `raw_value: str | None` to `Diagnostic`, threaded through at its
-three construction sites (`dateparse.py`'s `_error()`, `default.py`'s
-`term_query()` and `_coerce_range_bound()`), so paperless can build typed
-exceptions without parsing whoosh-compat's human-readable `message` text.
+`Diagnostic` carries `field: FieldRef | None` and `raw_value: str | None`,
+populated at its construction sites (`dateparse.py`'s `_error()`,
+`default.py`'s `BAD_NUMBER` sites), so paperless can build typed exceptions
+without parsing whoosh-compat's human-readable `message` text. `field` is a
+`FieldRef`, not a plain string; see the API reference at the top of this
+document.
 
 ## Field surface
 
@@ -220,16 +233,22 @@ knob for DATE fields the way it might look; it only matters in the sense
 that `created` sets it explicitly for clarity, while `modified`/`added`
 use `FieldKind.DATETIME` instead of relying on that override.
 
-**`subpaths` stays `tuple[str, ...]`, not a nested structure.** Confirmed
-against whoosh-compat's own `FieldRegistry.resolve_json()`: it splits a
+**`PublicField.subpaths` stays `tuple[str, ...]`, not a nested structure.**
+Confirmed against whoosh-compat's own `FieldRegistry.make_ref()`: it splits a
 dotted query term on the _first_ dot only and matches the remainder as an
 exact string against `spec.subpaths` — even the docstring's own
 `"metadata.author.name"` example is a single opaque string in the tuple,
-not a recursive tree. A tuple of strings is exactly as expressive as the
-library it feeds; inventing richer structure in `PublicField` now would
-just get flattened back to strings at the registry-construction boundary.
-Real recursive nesting, if ever needed, is new whoosh-compat capability
-first.
+not a recursive tree. (`FieldSpec.subpaths` itself now stores a `Mapping[str,
+SubpathSpec]` internally, normalized from whatever tuple is passed at
+construction; that's an implementation detail of `FieldSpec.__post_init__`,
+not something `PublicField`'s own table needs to mirror — passing a plain
+tuple into `FieldSpec(..., subpaths=...)` still works exactly as written
+here.) A tuple of strings is exactly as expressive as the library it feeds;
+inventing richer structure in `PublicField` now would just get flattened
+back to strings at the registry-construction boundary. Real recursive
+nesting, if ever needed, is new whoosh-compat capability first (the
+per-subpath `SubpathSpec` container exists specifically to make that a
+later, additive change).
 
 **JSON document population stays separate from `subpaths`.** `subpaths` is
 query-side only — it declares which dotted names are legal to type and
@@ -263,7 +282,21 @@ carve-out is self-retiring on whoosh-compat's side once tantivy-py catches
 up — but the acceptance corpus's `notes.user:`/`custom_fields.name:` cases
 (PR 4) are exercising that fallback escaping path specifically, not the
 programmatic path every other field goes through, and that's worth knowing
-if one of those cases ever behaves oddly around quoting/escaping.
+if one of those cases ever behaves oddly around quoting/escaping. A
+multi-token JSON subpath value with `Multitoken.AND`/`OR` now gets correct
+combinator semantics through this fallback (each token becomes its own
+`index.parse_query()`-backed leaf, `Must`/`Should`-combined normally,
+instead of collapsing into one space-joined phrase-shaped query); a genuine
+quoted phrase on a JSON subpath still cannot carry an explicit slop through
+this fallback (silently ignored, `~N` has no effect) until the carve-out
+retires. Also worth knowing given `custom_fields.value` is JSON: this
+fallback's `index.parse_query()` call gives a JSON subpath term free
+numeric/boolean type inference tantivy's own query grammar provides (a
+query like `custom_fields.value:100` matches both a stored JSON number `100`
+and a stored JSON string `"100"`); the future programmatic path (once
+tantivy-py#716 ships) has no equivalent union and would need this
+re-evaluated for numeric/boolean custom field values specifically
+(whoosh-compat's `DIVERGENCES.md` entry 22 tracks this open question).
 
 **Analyzer wiring**: `FieldSpec.analyzer` reuses the same `tantivy
 .TextAnalyzer` objects `_tokenizer.py` already builds (`_paperless_text
@@ -308,7 +341,7 @@ def parse_user_query(index, raw_query, tz):
         raise _diagnostics_to_error(result.diagnostics)   # ALL diagnostics, not [0]
 
     try:
-        exact = tantivy_emit(result.ast, index=index, schema=index.schema, registry=registry)
+        exact = tantivy_emit(result.ast, index=index, registry=registry)
     except UnsupportedQueryError as e:
         raise SearchQueryError(str(e)) from e
 
@@ -338,10 +371,18 @@ def _diagnostics_to_error(diagnostics: tuple[Diagnostic, ...]) -> SearchQueryErr
 
 
 def _single_diagnostic_to_error(d: Diagnostic) -> SearchQueryError:
+    # d.field is a FieldRef, not a string: str(d.field) gives the canonical
+    # dotted name (e.g. "created", "custom_fields.value"); an aliased query
+    # (type:) reports the field it resolves to (document_type).
+    field_name = str(d.field) if d.field is not None else None
     if d.kind is DiagnosticKind.BAD_DATE:
-        return InvalidDateQuery(d.field, d.raw_value)
+        return InvalidDateQuery(field_name, d.raw_value)
     if d.kind is DiagnosticKind.BAD_NUMBER:
-        return InvalidNumberQuery(d.field, d.raw_value)
+        return InvalidNumberQuery(field_name, d.raw_value)
+    # TOO_DEEP (pathological paren nesting) and UNSUPPORTED_PATTERN (a
+    # wildcard/prefix pattern on a numeric, BOOLEAN_EXISTS, or JSON-subpath
+    # field) both fall through to the generic message; a typed subclass for
+    # either isn't warranted unless a caller needs to branch on it.
     return SearchQueryError(d.message)
 ```
 
@@ -359,10 +400,10 @@ except SearchQueryError as e:
     raise ValidationError({"query": messages}) from e
 ```
 
-`d.field`/`d.raw_value` depend on the whoosh-compat prerequisite change
-(issue #1) landing first; until then (or if `field`/`raw_value` are `None`
-for a given diagnostic kind not yet covered), `_single_diagnostic_to_error`
-falls back to `SearchQueryError(d.message)`.
+`d.field`/`d.raw_value` are populated for `BAD_DATE` and `BAD_NUMBER`
+diagnostics; if either is `None` for a diagnostic kind that doesn't populate
+them, `_single_diagnostic_to_error`'s fallthrough to
+`SearchQueryError(d.message)` still applies.
 
 Deferred, explicitly out of scope for this PR stack: any frontend use of
 `startchar`/`endchar` (already present on `Diagnostic` today) to highlight
@@ -394,12 +435,18 @@ New tests per PR:
   (`_DATE_KEYWORDS`, all of `_UNIT_ALIASES`'s Whoosh-era abbreviations —
   `yrs`/`mos`/`wks`/`hrs`/`mins`/`secs` etc. — digit-precision forms, ISO
   dash forms, `now-7d`/`now+1h`/`now-30m` compact offsets, open/reversed
-  ranges). Each case parses through
-  `wc.parse()` against a DATE-kind `FieldRegistry` and asserts no
-  diagnostics _and_ bounds matching what `_dates.py`/`_translate.py`
-  compute today, using the still-present legacy code as the oracle.
-  Deleted again in PR 4 along with that oracle, superseded by the
-  permanent acceptance corpus. This audit is scoped to _parity_ only —
+  ranges). Each case parses through `wc.parse()` against a DATE-kind
+  `FieldRegistry` and asserts no diagnostics come back — a coverage check
+  only (does whoosh-compat accept this input at all), not a check on the
+  bounds or AST shape it parses to, which is whoosh-compat's own
+  differential-testing responsibility against a real whoosh oracle, not
+  something to re-verify here against `_translate.py` as a second, weaker
+  oracle. If the team wants confidence that actual search _behavior_ at a
+  given keyword didn't change, that belongs in the PR 4 result-level
+  acceptance corpus (real indexed documents at date boundaries, matched-ID
+  assertions), not an AST/bounds comparison.
+  Deleted again in PR 4 along with the legacy code it audits, superseded by
+  the permanent acceptance corpus. This audit is scoped to _parity_ only —
   whoosh-compat's date grammar is a strict superset of what `_dates.py`
   accepts today (e.g. `tomorrow`, `now`, `midnight`, `noon`, weekday names
   like `next monday`), so the migration also grants new date vocabulary for
@@ -431,9 +478,9 @@ PR stack — both repos are being actively co-developed. The final swap
 happens at PR 4:
 
 - **Primary plan**: whoosh-compat is released to PyPI around PR 3 (per
-  your stated intent), assuming the parity audit and issue #1 don't turn
-  up anything else needing a second round. PR 4 switches to a pinned PyPI
-  version (`whoosh-compat[tantivy]==X.Y.Z` in `dependencies`, the
+  your stated intent), assuming the parity audit doesn't turn up anything
+  needing a second round. PR 4 switches to a pinned PyPI version
+  (`whoosh-compat[tantivy]==X.Y.Z` in `dependencies`, the
   `[tool.uv.sources]` override removed entirely).
 - **Fallback**: if the PyPI release slips past PR 4's start, pin an exact
   git commit SHA instead (`whoosh-compat[tantivy] @ git+https://github.com/
