@@ -77,6 +77,7 @@ dependencies = [
   "torch~=2.13.0",
   "watchfiles>=1.2",
   "whitenoise~=6.11",
+  "whoosh-compat[tantivy]",
   "zxing-cpp~=3.1.0",
 ]
 [project.optional-dependencies]
@@ -168,6 +169,11 @@ psycopg-c = [
 torch = [
   { index = "pytorch-cpu" },
 ]
+# TODO: switch to a pinned PyPI version once whoosh-compat releases
+# (expected around this repo's PR 3 in the transition plan); fall back to a
+# pinned git commit SHA if that release slips. See
+# docs/superpowers/specs/2026-08-07-whoosh-compat-transition-design.md.
+whoosh-compat = { path = "../whoosh-compat" }
 
 [tool.ruff]
 target-version = "py311"
