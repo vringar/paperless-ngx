@@ -495,40 +495,21 @@ class TestParseUserQuery:
             # always quotes non-range relative date values), so the quoted
             # form here reflects real traffic, not weakened coverage.
             pytest.param('created:"previous week"', id="created_previous_week"),
-            # Full ISO datetime range ("T"/"Z" RFC3339 style). CONFIRMED GAP:
-            # whoosh_compat's date grammar (ported from whoosh's English
-            # natural-language date parser) does not understand the "T"
-            # date/time separator or a trailing "Z" at all -- English().date_from
-            # returns None for "2026-01-01T00:00:00Z" and even bare
-            # "2026-01-01T00:00:00" (a space-separated "2026-01-01 00:00:00"
-            # does parse). This exact query shape was added in PR #13010 to
-            # restore v2 (Whoosh) advanced-search compatibility, i.e. it
-            # represents real saved-search back-compat, not a synthetic edge
-            # case -- see task-10-report.md for why this is flagged as a
-            # concern rather than silently fixed here.
+            # Full ISO datetime range ("T"/"Z" RFC3339 style). This exact query
+            # shape was added in PR #13010 to restore v2 (Whoosh) advanced-search
+            # compatibility, i.e. it represents real saved-search back-compat.
+            # whoosh-compat's date grammar now accepts "T" as a date/time
+            # separator and a trailing "Z" UTC designator (see
+            # whoosh_compat.parser.dateparse's English/_split_rfc3339_utc).
             pytest.param(
                 "created:[2026-01-01T00:00:00Z TO 2026-06-01T00:00:00Z]",
                 id="created_iso_range",
-                marks=pytest.mark.xfail(
-                    reason=(
-                        "whoosh-compat date grammar does not support RFC3339 "
-                        "T/Z datetime bounds; see task-10-report.md"
-                    ),
-                    raises=InvalidDateQuery,
-                ),
             ),
-            # Comma-separated ISO ranges (Whoosh v2 syntax) -- same gap as above.
+            # Comma-separated ISO ranges (Whoosh v2 syntax) -- same shape as above.
             pytest.param(
                 "created:[2026-01-01T00:00:00Z TO 2026-06-01T00:00:00Z],"
                 "added:[2026-05-01T00:00:00Z TO 2026-06-01T00:00:00Z]",
                 id="comma_iso_ranges",
-                marks=pytest.mark.xfail(
-                    reason=(
-                        "whoosh-compat date grammar does not support RFC3339 "
-                        "T/Z datetime bounds; see task-10-report.md"
-                    ),
-                    raises=MultipleSearchQueryErrors,
-                ),
             ),
         ],
     )
