@@ -9,6 +9,9 @@ from typing import cast
 
 import tantivy
 from django.conf import settings
+from whoosh_compat import FieldKind
+
+from documents.search._fields import PUBLIC_FIELDS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,17 +36,37 @@ def build_schema() -> tantivy.Schema:
     sb = tantivy.SchemaBuilder()
 
     sb.add_unsigned_field("id", stored=True, indexed=True, fast=True)
-    sb.add_text_field("checksum", stored=True, tokenizer_name="raw")
 
-    for field in (
-        "title",
-        "correspondent",
-        "document_type",
-        "storage_path",
-        "original_filename",
-        "content",
-    ):
-        sb.add_text_field(field, stored=True, tokenizer_name="paperless_text")
+    for field in PUBLIC_FIELDS:
+        if field.kind is FieldKind.TEXT:
+            sb.add_text_field(field.name, stored=True, tokenizer_name="paperless_text")
+        elif field.kind is FieldKind.KEYWORD:
+            sb.add_text_field(field.name, stored=True, tokenizer_name="raw")
+        elif field.kind is FieldKind.U64:
+            sb.add_unsigned_field(
+                field.name,
+                stored=True,
+                indexed=True,
+                fast=field.fast,
+            )
+        elif field.kind in (FieldKind.DATE, FieldKind.DATETIME):
+            sb.add_date_field(
+                field.name,
+                stored=True,
+                indexed=True,
+                fast=field.fast,
+            )
+        elif field.kind is FieldKind.JSON:
+            sb.add_json_field(field.name, stored=True, tokenizer_name="paperless_text")
+            if field.name == "notes":
+                # Plain-text companion for snippet generation — tantivy's
+                # SnippetGenerator does not support JSON fields. Schema-only,
+                # no query-syntax meaning, not in PUBLIC_FIELDS.
+                sb.add_text_field(
+                    "notes_text",
+                    stored=True,
+                    tokenizer_name="paperless_text",
+                )
 
     # Shadow sort fields - fast, not stored/indexed
     for field in ("title_sort", "correspondent_sort", "type_sort"):
@@ -86,15 +109,6 @@ def build_schema() -> tantivy.Schema:
     # The stored value is never read back, so storing it only wastes space.
     sb.add_text_field("autocomplete_word", stored=False, tokenizer_name="raw")
 
-    sb.add_text_field("tag", stored=True, tokenizer_name="paperless_text")
-
-    # JSON fields — structured queries: notes.user:alice, custom_fields.name:invoice
-    sb.add_json_field("notes", stored=True, tokenizer_name="paperless_text")
-    # Plain-text companion for notes — tantivy's SnippetGenerator does not support
-    # JSON fields, so highlights require a text field with the same content.
-    sb.add_text_field("notes_text", stored=True, tokenizer_name="paperless_text")
-    sb.add_json_field("custom_fields", stored=True, tokenizer_name="paperless_text")
-
     for field in (
         "correspondent_id",
         "document_type_id",
@@ -105,12 +119,6 @@ def build_schema() -> tantivy.Schema:
         "viewer_group_id",
     ):
         sb.add_unsigned_field(field, stored=False, indexed=True, fast=True)
-
-    for field in ("created", "modified", "added"):
-        sb.add_date_field(field, stored=True, indexed=True, fast=True)
-
-    for field in ("asn", "page_count", "num_notes"):
-        sb.add_unsigned_field(field, stored=True, indexed=True, fast=True)
 
     return sb.build()
 
