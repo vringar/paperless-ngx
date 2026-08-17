@@ -18,6 +18,8 @@ from documents.search._dates import _field_range_from_dates
 from documents.search._dates import _fmt
 from documents.search._dates import _precision_bounds
 from documents.search._dates import _utc_bounds_for_field
+from documents.search._query import InvalidDateQuery
+from documents.search._query import SearchQueryError  # noqa: F401
 
 # Compiled regex that matches any known multi-word (or single-word) date keyword
 # at the start of a match position, longest alternatives first so "previous week"
@@ -320,25 +322,6 @@ def resolve_commas(tokens: list) -> list:
         else:
             out.append(tok)
     return out
-
-
-class SearchQueryError(ValueError):
-    """
-    Base for user-fixable search query errors.
-
-    Carries a message safe to surface to the user (no internal details). The view
-    layer catches this and returns an HTTP 400, so any future subclass (unknown
-    field, malformed range, wrapped parser errors) gets the same treatment.
-    """
-
-
-class InvalidDateQuery(SearchQueryError):
-    """Raised when a date field value or range bound cannot be parsed."""
-
-    def __init__(self, field: str, value: str) -> None:
-        self.field = field
-        self.value = value
-        super().__init__(f"Invalid date value {value!r} for field {field!r}.")
 
 
 _DIGITS_RE = regex.compile(r"^\d{4}(?:\d{2}){0,2}$")

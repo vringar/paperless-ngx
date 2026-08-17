@@ -884,3 +884,43 @@ class TestPermissionFilter:
         user = django_user_model(pk=20)
         perm = build_permission_filter(perm_index.schema, user)
         assert perm_index.searcher().search(perm, limit=10).count == 1  # only unowned
+
+
+class TestSearchQueryErrors:
+    def test_invalid_date_query_is_a_search_query_error(self) -> None:
+        from documents.search._query import InvalidDateQuery
+        from documents.search._query import SearchQueryError
+
+        err = InvalidDateQuery("created", "notadate")
+        assert isinstance(err, SearchQueryError)
+        assert err.field == "created"
+        assert err.value == "notadate"
+        assert "created" in str(err)
+        assert "notadate" in str(err)
+
+    def test_invalid_number_query_is_a_search_query_error(self) -> None:
+        from documents.search._query import InvalidNumberQuery
+        from documents.search._query import SearchQueryError
+
+        err = InvalidNumberQuery("asn", "notanumber")
+        assert isinstance(err, SearchQueryError)
+        assert err.field == "asn"
+        assert err.value == "notanumber"
+        assert "asn" in str(err)
+        assert "notanumber" in str(err)
+
+    def test_multiple_search_query_errors_aggregates(self) -> None:
+        from documents.search._query import InvalidDateQuery
+        from documents.search._query import InvalidNumberQuery
+        from documents.search._query import MultipleSearchQueryErrors
+        from documents.search._query import SearchQueryError
+
+        sub_errors = [
+            InvalidDateQuery("created", "notadate"),
+            InvalidNumberQuery("asn", "notanumber"),
+        ]
+        err = MultipleSearchQueryErrors(sub_errors)
+        assert isinstance(err, SearchQueryError)
+        assert err.errors == tuple(sub_errors)
+        assert "created" in str(err)
+        assert "asn" in str(err)
