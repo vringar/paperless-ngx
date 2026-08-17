@@ -71,7 +71,7 @@ def register_tokenizers(index: tantivy.Index, language: str | None) -> None:
         use fast=True and Tantivy requires fast-field tokenizers to exist
         even for documents that omit those fields.
     """
-    index.register_tokenizer("paperless_text", _paperless_text(language))
+    index.register_tokenizer("paperless_text", paperless_text_analyzer(language))
     index.register_tokenizer("simple_analyzer", _simple_analyzer())
     index.register_tokenizer("bigram_analyzer", _bigram_analyzer())
     index.register_tokenizer("simple_search_analyzer", _simple_search_analyzer())
@@ -79,7 +79,7 @@ def register_tokenizers(index: tantivy.Index, language: str | None) -> None:
     index.register_fast_field_tokenizer("simple_analyzer", _simple_analyzer())
 
 
-def _paperless_text(language: str | None) -> tantivy.TextAnalyzer:
+def paperless_text_analyzer(language: str | None) -> tantivy.TextAnalyzer:
     """Main full-text tokenizer for content, title, etc: simple -> remove_long(129) -> lowercase -> ascii_fold [-> stemmer]"""
     builder = (
         tantivy.TextAnalyzerBuilder(tantivy.Tokenizer.simple())
