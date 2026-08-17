@@ -6,8 +6,14 @@ from typing import Final
 
 import regex
 import tantivy
+import whoosh_compat as wc
 from django.conf import settings
+from whoosh_compat.emitters.tantivy_ import emit as tantivy_emit
+from whoosh_compat.errors import Diagnostic
+from whoosh_compat.errors import DiagnosticKind
+from whoosh_compat.errors import UnsupportedQueryError
 
+from documents.search._registry import get_field_registry
 from documents.search._tokenizer import simple_search_tokens
 
 if TYPE_CHECKING:
@@ -53,9 +59,6 @@ class MultipleSearchQueryErrors(SearchQueryError):
         self.errors = tuple(errors)
         super().__init__("; ".join(str(e) for e in self.errors))
 
-
-# Import after exception definitions to avoid circular imports
-from documents.search._translate import translate_query  # noqa: E402
 
 logger = logging.getLogger("paperless.search")
 
@@ -218,50 +221,38 @@ def parse_user_query(
     tz: tzinfo,
 ) -> tantivy.Query:
     """
-    Parse user query through the complete preprocessing pipeline.
+    Parse user query through whoosh-compat, then blend in fuzzy/CJK clauses.
 
-    Transforms the raw user query through multiple stages:
-    1. Date keyword rewriting (today → ISO 8601 ranges)
-    2. Query normalization (comma expansion, whitespace cleanup)
-    3. Tantivy parsing with field boosts
-    4. Optional fuzzy query blending (if ADVANCED_FUZZY_SEARCH_THRESHOLD set)
-
-    Args:
-        index: Tantivy index with registered tokenizers
-        raw_query: Original user query string
-        tz: Timezone for date boundary calculations
-
-    Returns:
-        Parsed Tantivy query ready for execution
-
-    Note:
-        When ADVANCED_FUZZY_SEARCH_THRESHOLD is configured, adds a low-priority
-        fuzzy query as a Should clause (0.1 boost) to catch approximate matches
-        while keeping exact matches ranked higher. The threshold value is applied
-        as a post-search score filter, not during query construction.
+    1. wc.parse() against the shared FieldRegistry (whoosh grammar -> AST).
+    2. Any diagnostics (bad dates/numbers) map to SearchQueryError subclasses
+       and raise — the view returns HTTP 400 with every offending field
+       listed, not just the first.
+    3. emit() turns the AST into a tantivy.Query directly (no string
+       round-trip). UnsupportedQueryError (a construct that parses but can't
+       execute against tantivy, e.g. a text-field range) also maps to a 400.
+    4. Optional fuzzy blend (ADVANCED_FUZZY_SEARCH_THRESHOLD) re-parses
+       raw_query directly via index.parse_query — there's no clean AST-level
+       fuzzy equivalent, and fuzzy matching was always an approximate,
+       secondary clause.
+    5. Optional CJK bigram clause — unchanged from before this migration,
+       never went through the old translate_query() either.
     """
+    registry = get_field_registry(settings.SEARCH_LANGUAGE)
+    result = wc.parse(
+        raw_query,
+        registry=registry,
+        default_fields=DEFAULT_SEARCH_FIELDS,
+        field_boosts=_FIELD_BOOSTS,
+        tz=tz,
+    )
+    if result.diagnostics:
+        raise _diagnostics_to_error(result.diagnostics)
 
     try:
-        query_str = translate_query(raw_query, tz)
-    except SearchQueryError:
-        # Intentional, user-fixable error (e.g. an unparsable date). Propagate so
-        # the view can return a 400 with a helpful message rather than falling
-        # back to the raw (still-invalid) query.
-        raise
-    except Exception:  # pragma: no cover - defensive
-        logger.warning("Query translation failed; using raw query", exc_info=True)
-        query_str = raw_query
+        exact = tantivy_emit(result.ast, index=index, registry=registry)
+    except UnsupportedQueryError as e:
+        raise SearchQueryError(str(e)) from e
 
-    exact = index.parse_query(
-        query_str,
-        DEFAULT_SEARCH_FIELDS,
-        field_boosts=_FIELD_BOOSTS,
-    )
-
-    # The standard analyzer keeps a whitespace-free CJK run as a single token,
-    # so substring queries can't match content/title (and long runs are dropped
-    # by remove_long). Route CJK queries to the bigram fields, whose ngram
-    # tokenizer indexes overlapping 2-grams for substring matching.
     cjk_query = (
         _build_cjk_query(index, raw_query, _CJK_ALL_FIELDS)
         if _has_cjk(raw_query)
@@ -275,13 +266,11 @@ def parse_user_query(
     threshold = settings.ADVANCED_FUZZY_SEARCH_THRESHOLD
     if threshold is not None:
         fuzzy = index.parse_query(
-            query_str,
+            raw_query,
             DEFAULT_SEARCH_FIELDS,
             field_boosts=_FIELD_BOOSTS,
-            # (prefix=True, distance=1, transposition_cost_one=True) — edit-distance fuzziness
             fuzzy_fields={f: (True, 1, True) for f in DEFAULT_SEARCH_FIELDS},
         )
-        # 0.1 boost keeps fuzzy hits ranked below exact matches (intentional)
         clauses.append((tantivy.Occur.Should, tantivy.Query.boost_query(fuzzy, 0.1)))
 
     if cjk_query is not None:
@@ -290,6 +279,26 @@ def parse_user_query(
     if len(clauses) == 1:
         return exact
     return tantivy.Query.boolean_query(clauses)
+
+
+def _diagnostics_to_error(diagnostics: tuple[Diagnostic, ...]) -> SearchQueryError:
+    errors = [_single_diagnostic_to_error(d) for d in diagnostics]
+    return errors[0] if len(errors) == 1 else MultipleSearchQueryErrors(errors)
+
+
+def _single_diagnostic_to_error(d: Diagnostic) -> SearchQueryError:
+    # d.field is a FieldRef, not a str: str(d.field) gives the canonical
+    # dotted name (an aliased query, e.g. type:, reports document_type).
+    field_name = str(d.field) if d.field is not None else None
+    if d.kind is DiagnosticKind.BAD_DATE:
+        return InvalidDateQuery(field_name, d.raw_value)
+    if d.kind is DiagnosticKind.BAD_NUMBER:
+        return InvalidNumberQuery(field_name, d.raw_value)
+    # TOO_DEEP and UNSUPPORTED_PATTERN (e.g. a wildcard on asn/page_count/
+    # num_notes, or on a custom_fields.*/notes.* subpath) fall through to
+    # the generic message; consider whether either warrants its own typed
+    # subclass if callers ever need to distinguish them programmatically.
+    return SearchQueryError(d.message)
 
 
 def parse_simple_query(
