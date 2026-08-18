@@ -24,15 +24,18 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.search
 
 
+@pytest.fixture(scope="module")
+def query_index() -> tantivy.Index:
+    """An in-memory, unstemmed index shared read-only across this module's
+    parse-only tests (none of them index documents)."""
+    schema = build_schema()
+    idx = tantivy.Index(schema, path=None)
+    register_tokenizers(idx, "")
+    return idx
+
+
 class TestParseUserQuery:
     """parse_user_query runs the full preprocessing pipeline."""
-
-    @pytest.fixture
-    def query_index(self) -> tantivy.Index:
-        schema = build_schema()
-        idx = tantivy.Index(schema, path=None)
-        register_tokenizers(idx, "")
-        return idx
 
     def test_returns_tantivy_query(self, query_index: tantivy.Index) -> None:
         assert isinstance(parse_user_query(query_index, "invoice", UTC), tantivy.Query)
@@ -155,13 +158,6 @@ class TestParseUserQuery:
 
 class TestParseSimpleTextHighlightQuery:
     """parse_simple_text_highlight_query must not raise on natural-language queries."""
-
-    @pytest.fixture
-    def query_index(self) -> tantivy.Index:
-        schema = build_schema()
-        idx = tantivy.Index(schema, path=None)
-        register_tokenizers(idx, "")
-        return idx
 
     @pytest.mark.parametrize(
         "raw_query",
@@ -332,13 +328,6 @@ class TestEmitErrorContract:
     emit(), are both user-input errors and must surface as
     SearchQueryError (HTTP 400), with library-internal wording stripped
     from the message."""
-
-    @pytest.fixture
-    def query_index(self) -> tantivy.Index:
-        schema = build_schema()
-        idx = tantivy.Index(schema, path=None)
-        register_tokenizers(idx, "")
-        return idx
 
     def test_query_emit_error_maps_to_search_query_error(
         self,
