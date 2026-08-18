@@ -155,6 +155,14 @@ def _build_cjk_query(
     try:
         return index.parse_query(cjk_text, fields)
     except Exception:
+        # Broad on purpose, unlike _try_parse_fuzzy_query's narrower
+        # ValueError: cjk_text isn't filtered to a guaranteed-safe token
+        # set the way the fuzzy blend's word string is, so the exact
+        # failure mode tantivy could raise here isn't pinned down.
+        logger.debug(
+            "Skipping CJK search clause: could not parse CJK text: %r",
+            cjk_text,
+        )
         return None
 
 
