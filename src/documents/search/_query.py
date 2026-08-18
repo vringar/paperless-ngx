@@ -72,6 +72,12 @@ def _quote_date_keyword_phrases(raw_query: str) -> str:
     quoted spellings, TEXT fields, and standalone words are untouched.
     Only quoting happens here - every date computation stays in
     whoosh-compat's grammar.
+
+    Not quote-aware: matches anywhere in raw_query, including inside an
+    existing quoted phrase (e.g. ``title:"see added:previous month
+    notes"`` would get quotes inserted mid-phrase). Accepted as an
+    unlikely-in-practice edge case rather than implementing quote-aware
+    scanning.
     """
     return _DATE_KEYWORD_PHRASE_RE.sub(
         r'\1:"\2"',
@@ -95,7 +101,12 @@ _BARE_JSON_PREFIX_RES: Final = (
 
 def _rewrite_bare_json_field_prefixes(raw_query: str) -> str:
     """Rewrite bare ``notes:``/``custom_fields:`` prefixes to their
-    subpath equivalents. Prefix substitution only, values untouched."""
+    subpath equivalents. Prefix substitution only, values untouched.
+
+    Not quote-aware, same accepted trade-off as
+    _quote_date_keyword_phrases: a literal ``notes:`` inside an existing
+    quoted phrase on an unrelated field would also get rewritten.
+    """
     for pattern, replacement in _BARE_JSON_PREFIX_RES:
         raw_query = pattern.sub(replacement, raw_query, timeout=_REGEX_TIMEOUT)
     return raw_query
