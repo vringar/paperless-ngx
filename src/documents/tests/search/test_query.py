@@ -8,6 +8,7 @@ import pytest
 import tantivy
 import time_machine
 
+from documents.search._query import InvalidDateQuery
 from documents.search._query import InvalidNumberQuery
 from documents.search._query import MultipleSearchQueryErrors
 from documents.search._query import build_permission_filter
@@ -15,7 +16,6 @@ from documents.search._query import parse_simple_text_highlight_query
 from documents.search._query import parse_user_query
 from documents.search._schema import build_schema
 from documents.search._tokenizer import register_tokenizers
-from documents.search._translate import InvalidDateQuery
 
 if TYPE_CHECKING:
     from django.contrib.auth.base_user import AbstractBaseUser
