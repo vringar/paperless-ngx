@@ -198,7 +198,7 @@ def _build_cjk_query(
     matches against unrelated Latin text). Returns None when there is no CJK
     text or the parse fails.
     """
-    cjk_text = " ".join(_CJK_RE.findall(raw_query))
+    cjk_text = extract_cjk_text(raw_query)
     if not cjk_text:
         return None
     try:
