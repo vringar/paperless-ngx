@@ -332,13 +332,6 @@ _FIELD_BOOSTS = {"title": 2.0}
 _SIMPLE_FIELD_BOOSTS = {"simple_title": 2.0}
 
 
-def _simple_query_tokens(raw_query: str) -> list[str]:
-    # Tokenize and fold via the same analyzer used to index simple_title /
-    # simple_content, so query terms fold identically to the indexed terms
-    # (single source of truth for ASCII folding).
-    return simple_search_tokens(raw_query)
-
-
 def _any_of(clauses: list[tuple[tantivy.Occur, tantivy.Query]]) -> tantivy.Query:
     """Collapse a clause list: none -> empty, one -> itself (no wasted
     single-clause boolean_query wrapping), many -> boolean_query(clauses)."""
@@ -490,7 +483,7 @@ def parse_simple_query(
     CJK substrings the simple analyzer can't (long whitespace-free runs are
     dropped by remove_long).
     """
-    tokens = _simple_query_tokens(raw_query)
+    tokens = simple_search_tokens(raw_query)
 
     clauses: list[tuple[tantivy.Occur, tantivy.Query]] = []
     if tokens:
@@ -535,7 +528,7 @@ def parse_simple_text_highlight_query(
 
     # Strip Tantivy operator chars before tokenizing: this is a plain-text
     # highlight query, not a structured boolean query, so +/- are separators.
-    tokens = _simple_query_tokens(
+    tokens = simple_search_tokens(
         regex.sub(r"[-+]", " ", raw_query, timeout=_REGEX_TIMEOUT),
     )
     if not tokens:
