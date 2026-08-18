@@ -20,7 +20,7 @@ class TestPublicFields:
     def test_non_json_fields_have_no_subpaths(self) -> None:
         for field in PUBLIC_FIELDS:
             if field.kind is not FieldKind.JSON:
-                assert field.subpaths == ()
+                assert not field.subpaths
 
     def test_document_type_alias_is_type(self) -> None:
         field = next(f for f in PUBLIC_FIELDS if f.name == "document_type")
@@ -36,11 +36,11 @@ class TestPublicFields:
 
     def test_notes_subpaths(self) -> None:
         field = next(f for f in PUBLIC_FIELDS if f.name == "notes")
-        assert field.subpaths == ("user", "note")
+        assert set(field.subpaths) == {"user", "note"}
 
     def test_custom_fields_subpaths(self) -> None:
         field = next(f for f in PUBLIC_FIELDS if f.name == "custom_fields")
-        assert field.subpaths == ("name", "value")
+        assert set(field.subpaths) == {"name", "value"}
 
     def test_no_internal_id_fields_present(self) -> None:
         # tag_id/owner_id/viewer_id/etc. are permission-filter-only fields,

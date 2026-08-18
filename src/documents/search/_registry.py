@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
+
 from whoosh_compat import FieldKind
 from whoosh_compat import FieldRegistry
-from whoosh_compat import FieldSpec
 
 from documents.search._fields import PUBLIC_FIELDS
 from documents.search._tokenizer import ascii_fold
@@ -39,25 +40,16 @@ def get_field_registry(language: str | None) -> FieldRegistry:
 
     text_analyzer = paperless_text_analyzer(language).analyze
 
-    specs = []
-    for field in PUBLIC_FIELDS:
-        if field.kind is FieldKind.KEYWORD:
-            analyzer = _identity_analyzer
-        else:
-            analyzer = text_analyzer
-        specs.append(
-            FieldSpec(
-                name=field.name,
-                kind=field.kind,
-                aliases=field.aliases,
-                comma_values=field.comma_values,
-                analyzer=analyzer,
-                pattern_normalizer=_pattern_normalizer,
-                date_only=field.date_only,
-                fast=field.fast,
-                subpaths=field.subpaths,
-            ),
+    specs = [
+        dataclasses.replace(
+            field,
+            analyzer=_identity_analyzer
+            if field.kind is FieldKind.KEYWORD
+            else text_analyzer,
+            pattern_normalizer=_pattern_normalizer,
         )
+        for field in PUBLIC_FIELDS
+    ]
 
     registry = FieldRegistry(specs)
     _registry_cache[language] = registry

@@ -130,7 +130,7 @@ class TestSchemaMatchesPublicFields:
 
 class TestFastFlagAgreement:
     def test_every_public_field_fast_flag_matches_the_built_schema(self) -> None:
-        # whoosh-compat's registry trusts PublicField.fast when resolving
+        # whoosh-compat's registry trusts PUBLIC_FIELDS' fast flag when resolving
         # field:* existence checks (its FAST_FIELD strategy); a fast=True
         # entry whose actual tantivy column is not fast would make those
         # searches silently match nothing at search time. build_schema()
@@ -144,6 +144,6 @@ class TestFastFlagAgreement:
         }
         for public_field in PUBLIC_FIELDS:
             assert schema_fast[public_field.name] == public_field.fast, (
-                f"{public_field.name}: PublicField.fast={public_field.fast} but the"
+                f"{public_field.name}: PUBLIC_FIELDS says fast={public_field.fast} but the"
                 f" built schema says fast={schema_fast[public_field.name]}"
             )
