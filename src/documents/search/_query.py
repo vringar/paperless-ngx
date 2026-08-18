@@ -248,7 +248,7 @@ def _try_parse_fuzzy_query(
     failure the fuzzy clause is skipped and the exact/CJK clauses stand,
     rather than the whole query failing.
     """
-    tokens = wc.free_text_tokens(ast, registry=registry, fields=DEFAULT_SEARCH_FIELDS)
+    tokens = wc.free_text_tokens(ast, registry=registry, fields=_DEFAULT_SEARCH_FIELDS)
     words = [t for t in tokens if _WORD_TOKEN_RE.fullmatch(t)]
     if not words:
         return None
@@ -256,9 +256,9 @@ def _try_parse_fuzzy_query(
     try:
         return index.parse_query(
             fuzzy_text,
-            DEFAULT_SEARCH_FIELDS,
+            _DEFAULT_SEARCH_FIELDS,
             field_boosts=_FIELD_BOOSTS,
-            fuzzy_fields={f: (True, 1, True) for f in DEFAULT_SEARCH_FIELDS},
+            fuzzy_fields={f: (True, 1, True) for f in _DEFAULT_SEARCH_FIELDS},
         )
     except ValueError:
         logger.debug(
@@ -310,15 +310,15 @@ def build_permission_filter(
     )
 
 
-DEFAULT_SEARCH_FIELDS = [
+_DEFAULT_SEARCH_FIELDS: Final[list[str]] = [
     "title",
     "content",
     "correspondent",
     "document_type",
     "tag",
 ]
-SIMPLE_SEARCH_FIELDS = ["simple_title", "simple_content"]
-TITLE_SEARCH_FIELDS = ["simple_title"]
+_SIMPLE_SEARCH_FIELDS: Final[list[str]] = ["simple_title", "simple_content"]
+_TITLE_SEARCH_FIELDS: Final[list[str]] = ["simple_title"]
 _CJK_ALL_FIELDS: Final[list[str]] = [
     "bigram_content",
     "bigram_title",
@@ -410,7 +410,7 @@ def parse_user_query(
     result = wc.parse(
         raw_query,
         registry=registry,
-        default_fields=DEFAULT_SEARCH_FIELDS,
+        default_fields=_DEFAULT_SEARCH_FIELDS,
         field_boosts=_FIELD_BOOSTS,
         tz=tz,
     )
@@ -548,7 +548,7 @@ def parse_simple_text_query(
     return parse_simple_query(
         index,
         raw_query,
-        SIMPLE_SEARCH_FIELDS,
+        _SIMPLE_SEARCH_FIELDS,
         cjk_fields=_CJK_CONTENT_FIELDS,
     )
 
@@ -564,6 +564,6 @@ def parse_simple_title_query(
     return parse_simple_query(
         index,
         raw_query,
-        TITLE_SEARCH_FIELDS,
+        _TITLE_SEARCH_FIELDS,
         cjk_fields=_CJK_TITLE_FIELDS,
     )
