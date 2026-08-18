@@ -731,7 +731,7 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
             "which already quotes. CONFIRMED REGRESSION vs whoosh-compat "
             "migration; see task-10-report.md."
         ),
-        raises=KeyError,
+        raises=AssertionError,
     )
     def test_search_added_previous_month_excludes_next_period_start(self) -> None:
         """
@@ -769,6 +769,10 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
             tick=False,
         ):
             response = self.client.get("/api/documents/?query=added:previous month")
+        assert response.status_code == 200, (
+            f"expected a successful search response, got {response.status_code}: "
+            f"{response.data!r}"
+        )
         results = response.data["results"]
 
         self.assertEqual(len(results), 1)

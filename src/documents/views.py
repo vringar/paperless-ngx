@@ -2416,6 +2416,7 @@ class UnifiedSearchViewSet(DocumentViewSet):
         if not self._is_search_request():
             return super().list(request)
 
+        from documents.search import MultipleSearchQueryErrors
         from documents.search import SearchHit
         from documents.search import SearchQueryError
         from documents.search import TantivyBackend
@@ -2614,8 +2615,6 @@ class UnifiedSearchViewSet(DocumentViewSet):
             # User-fixable query error(s) (e.g. unparsable dates/numbers):
             # surface every offending field's message, not just the first,
             # so the user can fix them all in one round-trip.
-            from documents.search import MultipleSearchQueryErrors
-
             messages = (
                 [str(sub) for sub in e.errors]
                 if isinstance(e, MultipleSearchQueryErrors)

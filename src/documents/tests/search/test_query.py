@@ -59,12 +59,13 @@ class TestParseUserQuery:
         settings.ADVANCED_FUZZY_SEARCH_THRESHOLD = 0.5
         assert isinstance(parse_user_query(query_index, raw_query, UTC), tantivy.Query)
 
-    def test_date_rewriting_applied_before_tantivy_parse(
+    def test_date_keyword_resolves_without_raising(
         self,
         query_index: tantivy.Index,
     ) -> None:
-        # created:today must be rewritten to an ISO range before Tantivy parses it;
-        # if passed raw, Tantivy would reject "today" as an invalid date value
+        # whoosh-compat's DateParserPlugin resolves "today" against the AST
+        # directly (no string rewrite to an ISO range happens anywhere in
+        # this pipeline); the emitted tantivy query must still build cleanly.
         with time_machine.travel(datetime(2026, 3, 28, 12, 0, tzinfo=UTC), tick=False):
             q = parse_user_query(query_index, "created:today", UTC)
         assert isinstance(q, tantivy.Query)
@@ -92,9 +93,10 @@ class TestParseUserQuery:
         self,
         query_index: tantivy.Index,
     ) -> None:
-        # parse_user_query falls back to the raw query on unexpected translation
-        # errors, but an InvalidDateQuery is intentional and must propagate so the
-        # view can return a 400 instead of silently parsing the raw (invalid) date.
+        # parse_user_query never falls back to the raw query string on a parse
+        # error — a bad date diagnostic from whoosh-compat always maps to an
+        # InvalidDateQuery and must propagate, so the view can return a 400
+        # instead of silently parsing the raw (invalid) date.
         with pytest.raises(InvalidDateQuery) as exc_info:
             parse_user_query(query_index, "created:202023", UTC)
         assert exc_info.value.field == "created"
