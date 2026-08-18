@@ -919,6 +919,14 @@ original_filename:invoice.pdf
 - `original_filename` matches the filename of the document as originally
   consumed.
 
+Older, undocumented `*_id` field prefixes (`tag_id`, `owner_id`, `viewer_id`,
+`correspondent_id`, `document_type_id`, `storage_path_id`, `type_id`, and
+`path_id`) are no longer recognized advanced-search fields. A query using one
+of them (e.g. `tag_id:5`) does not error; it silently falls back to a literal
+text search for that string, which will almost never match real document
+content. Use the corresponding named field (`tag`, `correspondent`,
+`document_type`, etc.) instead.
+
 Matching inexact words:
 
 ```
@@ -926,6 +934,9 @@ produ*name
 ```
 
 Matching natural date keywords:
+
+Multi-word date keywords must be quoted (e.g. `added:"previous month"`); an
+unquoted multi-word keyword is not recognized as a date keyword.
 
 ```
 added:today
