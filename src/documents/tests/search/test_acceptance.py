@@ -500,3 +500,83 @@ class TestUnquotedDateKeywordPhrases:
             )
             backend.add_or_update(wordy)
             assert _matched_ids(backend, "title:previous month") == {wordy.pk}
+
+
+class TestBareJsonFieldPrefixes:
+    """The v2 whoosh schema had plural notes/custom_fields TEXT fields, so
+    "notes:foo" and "custom_fields:foo" were valid fielded searches in
+    released paperless (and at the tantivy translation layer). On the
+    whoosh-compat registry they are JSON fields addressable only via
+    subpaths, and the bare spelling would demote to a nonsense unfielded
+    text search. parse_user_query rewrites the bare prefixes live to the
+    same targets migration 0017 chose for the singular whoosh-era
+    spellings: notes: -> notes.note:, custom_fields: ->
+    custom_fields.value:."""
+
+    def test_bare_notes_prefix_searches_note_text(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        from django.contrib.auth.models import User
+
+        alice = User.objects.create_user(username="alice")
+        with_note = Document.objects.create(
+            title="Has note",
+            content="x",
+            checksum="bare-notes-with",
+        )
+        Note.objects.create(document=with_note, user=alice, note="crocodile")
+        # This document's CONTENT contains the words a demoted text search
+        # would match; it must NOT match once the prefix addresses notes.
+        decoy = Document.objects.create(
+            title="Notes about things",
+            content="notes crocodile mention",
+            checksum="bare-notes-decoy",
+        )
+        backend.add_or_update(with_note)
+        backend.add_or_update(decoy)
+        assert _matched_ids(backend, "notes:crocodile") == {with_note.pk}
+
+    def test_bare_custom_fields_prefix_searches_values(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        field = CustomField.objects.create(
+            name="Policy Number",
+            data_type=CustomField.FieldDataType.STRING,
+        )
+        with_value = Document.objects.create(
+            title="Has field",
+            content="x",
+            checksum="bare-cf-with",
+        )
+        CustomFieldInstance.objects.create(
+            document=with_value,
+            field=field,
+            value_text="crocodile",
+        )
+        decoy = Document.objects.create(
+            title="Custom things",
+            content="custom fields crocodile",
+            checksum="bare-cf-decoy",
+        )
+        backend.add_or_update(with_value)
+        backend.add_or_update(decoy)
+        assert _matched_ids(backend, "custom_fields:crocodile") == {with_value.pk}
+
+    def test_subpath_spellings_are_untouched(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        from django.contrib.auth.models import User
+
+        bob = User.objects.create_user(username="bob")
+        doc = Document.objects.create(
+            title="Bob note",
+            content="x",
+            checksum="bare-subpath",
+        )
+        Note.objects.create(document=doc, user=bob, note="remark")
+        backend.add_or_update(doc)
+        assert _matched_ids(backend, "notes.user:bob") == {doc.pk}
+        assert _matched_ids(backend, "notes.note:remark") == {doc.pk}

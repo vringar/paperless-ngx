@@ -958,6 +958,7 @@ custom_fields.name:Insurance custom_fields.value:policy
 - `custom_fields.value` matches against the value of any custom field.
 - `custom_fields.name` matches the name of the field (use quotes for multi-word names).
 - Combine both to find documents where a specific named field contains a specific value.
+- The bare `custom_fields:` prefix is shorthand for `custom_fields.value:`.
 
 Because separators are stripped during indexing, individual parts of formatted
 codes are searchable on their own. A value stored as `A-1312/99.50` produces the
@@ -984,6 +985,8 @@ notes.user:alice
 notes.note:reminder
 notes.user:alice notes.note:insurance
 ```
+
+The bare `notes:` prefix is shorthand for `notes.note:`.
 
 All of these constructs can be combined as you see fit. If you want to
 learn more about the query language used by paperless, see the

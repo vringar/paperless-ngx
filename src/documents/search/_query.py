@@ -125,6 +125,34 @@ def _quote_date_keyword_phrases(raw_query: str) -> str:
     )
 
 
+# The v2 whoosh schema had plural notes/custom_fields TEXT fields (notes
+# indexed the joined note texts; custom_fields indexed joined
+# "name : value" strings), so the bare plural prefixes were valid fielded
+# searches in released paperless and at the deleted translation layer. On
+# the whoosh-compat registry they are JSON fields addressable only via
+# subpaths, and the bare spelling would demote to an unfielded text search
+# of the words themselves. Rewrite the prefixes live to the same targets
+# migration 0017 chose for the singular whoosh-era spellings (note: ->
+# notes.note:, custom_field: -> custom_fields.value:), values untouched.
+# Trade-off inherited from that migration: custom_fields.value: drops the
+# name-matching half of v2's "name : value" indexing (custom_fields.name:
+# remains available for it). Same lookbehind guard as 0017: not preceded
+# by a word character or dot, so subpath spellings and words that merely
+# end in the prefix are untouched.
+_BARE_JSON_PREFIX_RES: Final = (
+    (regex.compile(r"(?<![.\w])notes:(?!\.)"), "notes.note:"),
+    (regex.compile(r"(?<![.\w])custom_fields:(?!\.)"), "custom_fields.value:"),
+)
+
+
+def _rewrite_bare_json_field_prefixes(raw_query: str) -> str:
+    """Rewrite bare ``notes:``/``custom_fields:`` prefixes to their
+    subpath equivalents. Prefix substitution only, values untouched."""
+    for pattern, replacement in _BARE_JSON_PREFIX_RES:
+        raw_query = pattern.sub(replacement, raw_query, timeout=_REGEX_TIMEOUT)
+    return raw_query
+
+
 def _has_cjk(text: str) -> bool:
     """Return True if text contains any CJK characters."""
     return bool(_CJK_RE.search(text))
@@ -339,10 +367,12 @@ def parse_user_query(
     """
     Parse user query through whoosh-compat, then blend in fuzzy/CJK clauses.
 
-    1. Unquoted multi-word date keyword phrases on date fields are quoted
-       (_quote_date_keyword_phrases) so the historically honored
-       "added:previous month" spelling keeps working; then wc.parse()
-       against the shared FieldRegistry (whoosh grammar -> AST).
+    1. Two small pre-parse rewrites keep historically honored spellings
+       working: unquoted multi-word date keyword phrases on date fields
+       are quoted (_quote_date_keyword_phrases), and bare
+       notes:/custom_fields: prefixes become their subpath equivalents
+       (_rewrite_bare_json_field_prefixes). Then wc.parse() against the
+       shared FieldRegistry (whoosh grammar -> AST).
     2. Any diagnostics (bad dates/numbers) map to SearchQueryError subclasses
        and raise — the view returns HTTP 400 with every offending field
        listed, not just the first.
@@ -361,6 +391,7 @@ def parse_user_query(
     """
     registry = get_field_registry(settings.SEARCH_LANGUAGE)
     raw_query = _quote_date_keyword_phrases(raw_query)
+    raw_query = _rewrite_bare_json_field_prefixes(raw_query)
     result = wc.parse(
         raw_query,
         registry=registry,
