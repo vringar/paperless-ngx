@@ -84,8 +84,8 @@ class TestNeedsRebuild:
         assert needs_rebuild(index_dir) is True
 
 
-def _schema_field_names(schema: tantivy.Schema) -> set[str]:
-    """Return the set of field names declared on a tantivy Schema.
+def _schema_fields(schema: tantivy.Schema) -> dict[str, dict]:
+    """{name: field-state} for every field declared on a tantivy Schema.
 
     tantivy-py 0.26 exposes no public introspection API on Schema (no
     __iter__, get_field, to_json, etc.) -- __reduce__() (used internally for
@@ -93,13 +93,13 @@ def _schema_field_names(schema: tantivy.Schema) -> set[str]:
     here for test assertions only.
     """
     state = schema.__reduce__()[1][0]
-    return {field["name"] for field in state["inner"]}
+    return {field["name"]: field for field in state["inner"]}
 
 
 class TestSchemaMatchesPublicFields:
     def test_every_public_field_is_in_the_schema(self) -> None:
         schema = build_schema()
-        schema_field_names = _schema_field_names(schema)
+        schema_field_names = set(_schema_fields(schema))
         for field in PUBLIC_FIELDS:
             assert field.name in schema_field_names, (
                 f"{field.name} is in PUBLIC_FIELDS but missing from build_schema()"
@@ -138,10 +138,9 @@ class TestFastFlagAgreement:
         # pins the agreement for EVERY kind: a future fast=True
         # TEXT/KEYWORD/JSON entry the builder silently ignores fails here
         # instead of at a user's query.
-        state = build_schema().__reduce__()[1][0]
         schema_fast = {
-            field["name"]: bool(field["options"].get("fast", False))
-            for field in state["inner"]
+            name: bool(field["options"].get("fast", False))
+            for name, field in _schema_fields(build_schema()).items()
         }
         for public_field in PUBLIC_FIELDS:
             assert schema_fast[public_field.name] == public_field.fast, (
