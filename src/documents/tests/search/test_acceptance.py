@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 import pytest
+import time_machine
 
 from documents.models import CustomField
 from documents.models import CustomFieldInstance
@@ -348,3 +349,62 @@ class TestUnregisteredIdFieldFoldsToLiteralText:
     ) -> None:
         matched = _matched_ids(backend, "tag_id:5")
         assert matched == set()
+
+
+class TestFuzzyBlendSurvivesWhooshGrammar:
+    """A query mixing whoosh-only grammar (a date keyword) with a typo'd
+    free-text word must still fuzzy-match the intended document when
+    ADVANCED_FUZZY_SEARCH_THRESHOLD is enabled. The fuzzy clause is built
+    from the parsed query's free-text tokens (whoosh_compat's
+    free_text_tokens), never from the raw query string, so whoosh grammar
+    that tantivy's own parser rejects cannot knock the fuzzy clause out."""
+
+    def test_typo_fuzzy_matches_alongside_date_keyword(
+        self,
+        backend: TantivyBackend,
+        settings,
+    ) -> None:
+        settings.ADVANCED_FUZZY_SEARCH_THRESHOLD = 0.5
+        with time_machine.travel(FROZEN_NOW, tick=False):
+            doc = Document.objects.create(
+                title="Receipt March",
+                content="receipt total due",
+                checksum="fuzzy-blend-1",
+                archive_serial_number=900,
+            )
+            backend.add_or_update(doc)
+            # Sanity: the exact spelling matches through the exact clause.
+            assert doc.pk in _matched_ids(backend, "added:today receipt")
+            # The regression: the misspelling (one transposition) only
+            # matches via the fuzzy clause, and "added:today" is
+            # whoosh-only grammar tantivy's parser rejects, so raw-string
+            # fuzzy parsing skips the clause entirely and this returns
+            # nothing. The typo is deliberate; keep codespell away from it.
+            typo_query = "added:today reciept"  # codespell:ignore reciept
+            assert doc.pk in _matched_ids(backend, typo_query)
+
+    def test_negated_words_do_not_fuzzy_match(
+        self,
+        backend: TantivyBackend,
+        settings,
+    ) -> None:
+        # A term the user excluded must not resurface through the fuzzy
+        # clause. The shape is chosen so this genuinely discriminates: the
+        # indexed document contains the NOT'd word but NOT the positive
+        # word, so nothing matches the exact clause, and a fuzzy string
+        # naively built from ALL words (including the NOT'd one) would
+        # make this document the sole hit, normalize its score to 1.0,
+        # and survive any threshold. (A shape with an exact-matching
+        # sibling document does NOT discriminate: normalization ranks the
+        # resurfaced doc far below the exact match and the threshold cuts
+        # it even for a naive implementation.)
+        settings.ADVANCED_FUZZY_SEARCH_THRESHOLD = 0.5
+        with time_machine.travel(FROZEN_NOW, tick=False):
+            receipt_only = Document.objects.create(
+                title="Receipt Archive",
+                content="receipt archived stack",
+                checksum="fuzzy-blend-2",
+                archive_serial_number=901,
+            )
+            backend.add_or_update(receipt_only)
+            assert _matched_ids(backend, "added:today total NOT receipt") == set()

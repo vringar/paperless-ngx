@@ -111,36 +111,64 @@ def _build_cjk_query(
         return None
 
 
+# A joined fuzzy word string must stay plain words: any token that could
+# read as tantivy query grammar (a colon, bracket, quote, operator...) is
+# dropped rather than escaped. Today's default-field analyzers only emit
+# word characters, so this never fires; it guards a future field whose
+# analyzer passes punctuation through (an identity/keyword analyzer).
+_WORD_TOKEN_RE = regex.compile(r"\w+")
+
+
 def _try_parse_fuzzy_query(
     index: tantivy.Index,
-    raw_query: str,
+    ast: wc.ast.Node,
+    registry: wc.FieldRegistry,
 ) -> tantivy.Query | None:
-    """Build the fuzzy blend clause from ``raw_query``, or None if it can't.
+    """Build the fuzzy blend clause from the parsed query's free-text
+    words, or None if it has none.
 
-    The fuzzy blend hands ``raw_query`` directly to tantivy's own query
-    parser (there's no clean AST-level fuzzy equivalent to whoosh-compat's
-    parse tree, and fuzzy matching was always an approximate, secondary,
-    0.1-boosted clause). But raw_query is whoosh grammar, not tantivy
-    grammar: it can contain date keywords (``today``), whoosh ranges
-    (``[2005 to 2009]``), or bracket-class wildcards (``202[0-1]*``) that
-    tantivy's parser rejects with a ValueError. Rather than let that escape
-    parse_user_query and fail the query's EXACT clause too (see paperless-
-    ngx's whoosh-compat migration regression), degrade gracefully: skip the
-    fuzzy clause and keep the exact/CJK clauses. Only ValueError is caught
-    — a broad except here would also hide real bugs.
+    The clause is built by handing tantivy's own query parser a plain
+    word string (there's no clean AST-level fuzzy equivalent to
+    whoosh-compat's parse tree, and fuzzy matching was always an
+    approximate, secondary, 0.1-boosted clause). The words come from
+    whoosh_compat's ``free_text_tokens`` over the already-parsed AST,
+    never from the raw query string: raw whoosh grammar (date keywords,
+    ``[2005 to 2009]`` ranges, bracket-class wildcards) is not tantivy
+    syntax, and feeding it here used to knock the fuzzy clause out for
+    the whole query the moment any such construct appeared alongside a
+    typo'd word. The helper also keeps excluded terms out: a ``NOT``'d
+    word must not resurface through the fuzzy clause.
+
+    Chosen trade-off: a term explicitly fielded on one of the default
+    search fields (``correspondent:acme``) contributes its text to the
+    word string UNFIELDED, so the fuzzy clause searches it across all
+    default fields rather than just the one the user named. That is
+    recall-only widening on a secondary 0.1-boosted clause the score
+    threshold already disciplines, accepted in exchange for never feeding
+    field syntax to tantivy's parser.
+
+    The ValueError guard stays as insurance (the word string is plain
+    tokens, so tantivy accepting it is expected, not assumed): on a parse
+    failure the fuzzy clause is skipped and the exact/CJK clauses stand,
+    rather than the whole query failing.
     """
+    tokens = wc.free_text_tokens(ast, registry=registry, fields=DEFAULT_SEARCH_FIELDS)
+    words = [t for t in tokens if _WORD_TOKEN_RE.fullmatch(t)]
+    if not words:
+        return None
+    fuzzy_text = " ".join(words)
     try:
         return index.parse_query(
-            raw_query,
+            fuzzy_text,
             DEFAULT_SEARCH_FIELDS,
             field_boosts=_FIELD_BOOSTS,
             fuzzy_fields={f: (True, 1, True) for f in DEFAULT_SEARCH_FIELDS},
         )
     except ValueError:
         logger.debug(
-            "Skipping fuzzy search clause: raw query is not valid tantivy "
-            "query syntax: %r",
-            raw_query,
+            "Skipping fuzzy search clause: token string is not valid "
+            "tantivy query syntax: %r",
+            fuzzy_text,
         )
         return None
 
@@ -264,14 +292,13 @@ def parse_user_query(
     3. emit() turns the AST into a tantivy.Query directly (no string
        round-trip). UnsupportedQueryError (a construct that parses but can't
        execute against tantivy, e.g. a text-field range) also maps to a 400.
-    4. Optional fuzzy blend (ADVANCED_FUZZY_SEARCH_THRESHOLD) re-parses
-       raw_query directly via index.parse_query — there's no clean AST-level
-       fuzzy equivalent, and fuzzy matching was always an approximate,
-       secondary clause. raw_query still carries whoosh grammar (date
-       keywords, bracket-class wildcards, etc.) that tantivy's own parser
-       cannot parse; when that happens the fuzzy clause is skipped rather
-       than letting the ValueError escape and fail the whole query (see
-       _try_parse_fuzzy_query).
+    4. Optional fuzzy blend (ADVANCED_FUZZY_SEARCH_THRESHOLD) builds a
+       plain word string from the parsed AST's free-text tokens
+       (whoosh_compat.free_text_tokens) and feeds THAT to
+       index.parse_query — never raw_query, whose whoosh grammar (date
+       keywords, bracket-class wildcards, etc.) tantivy's parser rejects,
+       which used to silently knock the fuzzy clause out of any mixed
+       query (see _try_parse_fuzzy_query).
     5. Optional CJK bigram clause — unchanged from before this migration,
        never went through the pre-whoosh-compat translation layer either.
     """
@@ -303,7 +330,7 @@ def parse_user_query(
 
     threshold = settings.ADVANCED_FUZZY_SEARCH_THRESHOLD
     if threshold is not None:
-        fuzzy = _try_parse_fuzzy_query(index, raw_query)
+        fuzzy = _try_parse_fuzzy_query(index, result.ast, registry)
         if fuzzy is not None:
             clauses.append(
                 (tantivy.Occur.Should, tantivy.Query.boost_query(fuzzy, 0.1)),
