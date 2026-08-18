@@ -10,6 +10,7 @@ from documents.search._query import InvalidDateQuery
 from documents.search._query import InvalidNumberQuery
 from documents.search._query import MultipleSearchQueryErrors
 from documents.search._query import SearchQueryError
+from documents.search._query import search_query_error_messages
 from documents.search._schema import needs_rebuild
 from documents.search._schema import wipe_index
 
@@ -27,5 +28,6 @@ __all__ = [
     "get_backend",
     "needs_rebuild",
     "reset_backend",
+    "search_query_error_messages",
     "wipe_index",
 ]

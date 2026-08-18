@@ -855,6 +855,29 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
         results = response.data["results"]
         self.assertEqual({r["id"] for r in results}, {1, 2})
 
+    @mock.patch("documents.search._backend.parse_user_query")
+    def test_search_parser_bug_surfaces_as_500_not_400(self, m) -> None:
+        """
+        GIVEN:
+            - The query parser itself fails (a whoosh-compat bug, per
+              QueryParserError's own contract: not user-fixable input)
+        WHEN:
+            - Any search request runs
+        THEN:
+            - The error surfaces as a 500 monitoring can see, never a 400
+              blaming the user for a library defect
+        """
+        from whoosh_compat.errors import QueryParserError
+
+        m.side_effect = QueryParserError("synthetic parser bug")
+
+        self.client.raise_request_exception = False
+        response = self.client.get("/api/documents/?query=anything")
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
     @mock.patch("documents.search._backend.TantivyBackend.autocomplete")
     def test_search_autocomplete_limits(self, m) -> None:
         """

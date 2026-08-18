@@ -2416,12 +2416,14 @@ class UnifiedSearchViewSet(DocumentViewSet):
         if not self._is_search_request():
             return super().list(request)
 
-        from documents.search import MultipleSearchQueryErrors
+        from whoosh_compat.errors import QueryParserError
+
         from documents.search import SearchHit
         from documents.search import SearchQueryError
         from documents.search import TantivyBackend
         from documents.search import TantivyRelevanceList
         from documents.search import get_backend
+        from documents.search import search_query_error_messages
 
         def parse_search_params() -> SearchParams:
             """Extract query string, search mode, and ordering from request."""
@@ -2615,12 +2617,12 @@ class UnifiedSearchViewSet(DocumentViewSet):
             # User-fixable query error(s) (e.g. unparsable dates/numbers):
             # surface every offending field's message, not just the first,
             # so the user can fix them all in one round-trip.
-            messages = (
-                [str(sub) for sub in e.errors]
-                if isinstance(e, MultipleSearchQueryErrors)
-                else [str(e)]
-            )
-            raise ValidationError({"query": messages}) from e
+            raise ValidationError({"query": search_query_error_messages(e)}) from e
+        except QueryParserError:
+            # A whoosh-compat parser BUG (its own contract: not user-fixable
+            # input). Let it surface as a 500 monitoring can see instead of
+            # a 400 blaming the user for a library defect.
+            raise
         except Exception as e:
             logger.warning(f"An error occurred listing search results: {e!s}")
             return HttpResponseBadRequest(
@@ -2767,17 +2769,29 @@ class DocumentSelectionMixin:
         backend = get_backend()
         search_user = None if user.is_superuser else user
 
-        if filter_name == "more_like_id":
-            more_like_doc_id = _get_more_like_id(filters, user)
+        from documents.search import SearchQueryError
+        from documents.search import search_query_error_messages
 
-            search_ids = backend.more_like_this_ids(more_like_doc_id, user=search_user)
-        else:
-            query_str, search_mode = _get_tantivy_query_and_mode(filters)
-            search_ids = backend.search_ids(
-                query_str,
-                user=search_user,
-                search_mode=search_mode,
-            )
+        try:
+            if filter_name == "more_like_id":
+                more_like_doc_id = _get_more_like_id(filters, user)
+
+                search_ids = backend.more_like_this_ids(
+                    more_like_doc_id,
+                    user=search_user,
+                )
+            else:
+                query_str, search_mode = _get_tantivy_query_and_mode(filters)
+                search_ids = backend.search_ids(
+                    query_str,
+                    user=search_user,
+                    search_mode=search_mode,
+                )
+        except SearchQueryError as e:
+            # Same user-fixable-query mapping as the search list endpoint:
+            # a bad date/number in a bulk selection filter is a 400 naming
+            # the value, never a 500.
+            raise ValidationError({"query": search_query_error_messages(e)}) from e
 
         return search_ids
 

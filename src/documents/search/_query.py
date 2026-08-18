@@ -11,6 +11,7 @@ from django.conf import settings
 from whoosh_compat.emitters.tantivy_ import emit as tantivy_emit
 from whoosh_compat.errors import Diagnostic
 from whoosh_compat.errors import DiagnosticKind
+from whoosh_compat.errors import QueryEmitError
 from whoosh_compat.errors import UnsupportedQueryError
 
 from documents.search._fields import PUBLIC_FIELDS
@@ -59,6 +60,18 @@ class MultipleSearchQueryErrors(SearchQueryError):
     def __init__(self, errors: Sequence[SearchQueryError]) -> None:
         self.errors = tuple(errors)
         super().__init__("; ".join(str(e) for e in self.errors))
+
+
+def search_query_error_messages(e: SearchQueryError) -> list[str]:
+    """The user-facing message list for a SearchQueryError.
+
+    Every offending value's message, not just the first, so the user can
+    fix them all in one round-trip. Shared by every view that maps
+    SearchQueryError to an HTTP 400.
+    """
+    if isinstance(e, MultipleSearchQueryErrors):
+        return [str(sub) for sub in e.errors]
+    return [str(e)]
 
 
 logger = logging.getLogger("paperless.search")
@@ -151,6 +164,23 @@ def _rewrite_bare_json_field_prefixes(raw_query: str) -> str:
     for pattern, replacement in _BARE_JSON_PREFIX_RES:
         raw_query = pattern.sub(replacement, raw_query, timeout=_REGEX_TIMEOUT)
     return raw_query
+
+
+# whoosh-compat's emit() error messages are written for the HOST: they
+# cite the library's own divergence ledger and give registry-configuration
+# advice. Neither belongs in a message shown to a searching user.
+_DIVERGENCE_REF_RE: Final = regex.compile(r"\s*\(DIVERGENCES\.md entry \d+\)")
+
+
+def _user_facing_emit_message(exc: Exception) -> str:
+    """A user-safe message for a QueryEmitError/UnsupportedQueryError."""
+    message = _DIVERGENCE_REF_RE.sub("", str(exc))
+    if "fast=True" in message:
+        # The exists-check message advises marking the field fast=True, a
+        # host configuration action; the user just needs to know the
+        # search form is unsupported here.
+        return "existence searches (field:*) are not supported for this field"
+    return message
 
 
 def _has_cjk(text: str) -> bool:
@@ -404,8 +434,10 @@ def parse_user_query(
 
     try:
         exact = tantivy_emit(result.ast, index=index, registry=registry)
-    except UnsupportedQueryError as e:
-        raise SearchQueryError(str(e)) from e
+    except (QueryEmitError, UnsupportedQueryError) as e:
+        # emit()'s documented host contract: BOTH of these are user-input
+        # errors, exactly like a parse diagnostic, and both map to a 400.
+        raise SearchQueryError(_user_facing_emit_message(e)) from e
 
     cjk_query = (
         _build_cjk_query(index, raw_query, _CJK_ALL_FIELDS)

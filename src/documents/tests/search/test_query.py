@@ -11,6 +11,7 @@ import time_machine
 from documents.search._query import InvalidDateQuery
 from documents.search._query import InvalidNumberQuery
 from documents.search._query import MultipleSearchQueryErrors
+from documents.search._query import SearchQueryError
 from documents.search._query import build_permission_filter
 from documents.search._query import parse_simple_text_highlight_query
 from documents.search._query import parse_user_query
@@ -333,3 +334,55 @@ class TestSearchQueryErrors:
         assert err.errors == tuple(sub_errors)
         assert "created" in str(err)
         assert "asn" in str(err)
+
+
+class TestEmitErrorContract:
+    """whoosh-compat's emit() documents a two-part host contract: BOTH a
+    non-empty diagnostics list AND the QueryEmitError/UnsupportedQueryError
+    pair raised by emit() itself are user-input errors. Every one must
+    surface as SearchQueryError (HTTP 400), with library-internal
+    vocabulary (DIVERGENCES.md references, fast=True host advice) kept out
+    of the user-facing message."""
+
+    @pytest.fixture
+    def query_index(self) -> tantivy.Index:
+        schema = build_schema()
+        idx = tantivy.Index(schema, path=None)
+        register_tokenizers(idx, "")
+        return idx
+
+    def test_query_emit_error_maps_to_search_query_error(
+        self,
+        query_index: tantivy.Index,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from whoosh_compat.errors import QueryEmitError
+
+        import documents.search._query as query_mod
+
+        def raise_emit_error(*args: object, **kwargs: object) -> None:
+            raise QueryEmitError("synthetic emit failure")
+
+        monkeypatch.setattr(query_mod, "tantivy_emit", raise_emit_error)
+        with pytest.raises(SearchQueryError):
+            parse_user_query(query_index, "invoice", UTC)
+
+    @pytest.mark.parametrize(
+        ("query", "leaked_fragment"),
+        [
+            pytest.param("title:[a TO b]", "DIVERGENCES", id="text-range-doc-ref"),
+            pytest.param("notes.note:wild*", "DIVERGENCES", id="json-wildcard-doc-ref"),
+            pytest.param("notes.user:*", "fast=True", id="exists-host-advice"),
+        ],
+    )
+    def test_unsupported_messages_carry_no_internal_vocabulary(
+        self,
+        query_index: tantivy.Index,
+        query: str,
+        leaked_fragment: str,
+    ) -> None:
+        with pytest.raises(SearchQueryError) as exc_info:
+            parse_user_query(query_index, query, UTC)
+        assert leaked_fragment not in str(exc_info.value)
+        # The message must still say something useful, not be blanked.
+        assert str(exc_info.value).strip()
