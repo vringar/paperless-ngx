@@ -903,6 +903,22 @@ added:yesterday
 modified:today
 ```
 
+Matching by archive metadata:
+
+```
+asn:100
+page_count:12
+checksum:a1b2c3d4
+original_filename:invoice.pdf
+```
+
+- `asn` matches a document's Archive Serial Number.
+- `page_count` matches a document's page count.
+- `checksum` matches the checksum of the original document file (not the
+  archived/processed version).
+- `original_filename` matches the filename of the document as originally
+  consumed.
+
 Matching inexact words:
 
 ```
