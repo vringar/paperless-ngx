@@ -152,6 +152,9 @@ class TestParseUserQuery:
     ) -> None:
         # tag_id is intentionally excluded from the FieldRegistry — whoosh-compat
         # parity leniency folds it into literal text, not a diagnostic/400.
+        # A result-level assertion that this fold actually matches nothing
+        # against real documents lives in
+        # test_acceptance.py::TestUnregisteredIdFieldFoldsToLiteralText.
         q = parse_user_query(query_index, "tag_id:5", UTC)
         assert isinstance(q, tantivy.Query)
 

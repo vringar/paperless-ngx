@@ -245,3 +245,19 @@ class TestMultitokenInNestedOr:
         backend.add_or_update(doc_b)
         matched = _matched_ids(backend, 'tag:"multi word tag" OR title:B')
         assert matched == {doc_a.pk, doc_b.pk}
+
+
+class TestUnregisteredIdFieldFoldsToLiteralText:
+    """tag_id, owner_id, etc. are intentionally excluded from the
+    FieldRegistry - whoosh-compat parity leniency folds them into a literal
+    text search rather than raising a diagnostic/400 (see docs/usage.md's
+    advanced-search section). Prove the fold is inert against real data, not
+    just that parsing doesn't raise."""
+
+    def test_tag_id_query_matches_nothing(
+        self,
+        backend: TantivyBackend,
+        indexed_documents: dict[str, int],
+    ) -> None:
+        matched = _matched_ids(backend, "tag_id:5")
+        assert matched == set()
