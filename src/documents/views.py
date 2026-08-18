@@ -2763,14 +2763,13 @@ class DocumentSelectionMixin:
                 },
             )
 
+        from documents.search import SearchQueryError
         from documents.search import get_backend
+        from documents.search import search_query_error_messages
 
         filter_name = search_filters[0]
         backend = get_backend()
         search_user = None if user.is_superuser else user
-
-        from documents.search import SearchQueryError
-        from documents.search import search_query_error_messages
 
         try:
             if filter_name == "more_like_id":
