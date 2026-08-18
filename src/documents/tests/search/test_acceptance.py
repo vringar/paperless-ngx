@@ -3,8 +3,7 @@ real queries run through parse_user_query(), matched-document-ID sets
 asserted — not intermediate ASTs or query strings. This is paperless-ngx's
 analogue of whoosh-compat's own tests/emitter/test_acceptance_e2e.py.
 
-Supersedes test_query.py's TestParseUserQuery result-level cases and the
-now-deleted test_date_grammar_parity.py.
+Supersedes test_query.py's TestParseUserQuery result-level cases.
 """
 
 from __future__ import annotations
