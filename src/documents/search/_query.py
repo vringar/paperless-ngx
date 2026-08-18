@@ -84,15 +84,10 @@ _REGEX_TIMEOUT: Final[float] = 1.0
 # Uses Unicode properties to cover all blocks including Extension B+ planes.
 _CJK_RE: Final = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]+")
 
-# The closed multi-word date-keyword vocabulary, unchanged since paperless
-# v2's rewrite_natural_date_keywords. whoosh-compat's date grammar
-# understands every one of these natively, but only as a QUOTED value
-# (its DIVERGENCES.md entry 19: unquoted multi-word values split at
-# whitespace, faithfully to whoosh); the unquoted spelling has been
-# honored continuously since the whoosh era by an app-level assist, so
-# _quote_date_keyword_phrases below keeps honoring it by inserting the
-# quotes and nothing else. Single-word keywords (today, yesterday) parse
-# unquoted already and need no entry.
+# Multi-word date-keyword phrases whoosh-compat only accepts quoted.
+# Unquoted has always been the honored spelling, so
+# _quote_date_keyword_phrases below inserts the quotes and nothing else.
+# Single-word keywords (today, yesterday) already parse unquoted.
 _DATE_KEYWORD_PHRASES: Final = (
     "previous week",
     "previous month",
@@ -122,14 +117,10 @@ _DATE_KEYWORD_PHRASE_RE: Final = regex.compile(
 def _quote_date_keyword_phrases(raw_query: str) -> str:
     """Quote unquoted multi-word date keyword phrases on date fields.
 
-    ``added:previous month`` becomes ``added:"previous month"``; the
-    already-quoted spellings don't match the pattern (the colon must be
-    followed directly by the phrase), and the same words after a TEXT
-    field or standing alone are ordinary text and untouched. Only quoting
-    happens here: every date computation stays in whoosh-compat's
-    grammar, which parses exactly this phrase vocabulary as quoted
-    values. This is deliberately NOT a revival of the deleted
-    translation layer, which computed the ranges app-side.
+    ``added:previous month`` becomes ``added:"previous month"``; already-
+    quoted spellings, TEXT fields, and standalone words are untouched.
+    Only quoting happens here - every date computation stays in
+    whoosh-compat's grammar.
     """
     return _DATE_KEYWORD_PHRASE_RE.sub(
         r'\1:"\2"',
@@ -138,20 +129,13 @@ def _quote_date_keyword_phrases(raw_query: str) -> str:
     )
 
 
-# The v2 whoosh schema had plural notes/custom_fields TEXT fields (notes
-# indexed the joined note texts; custom_fields indexed joined
-# "name : value" strings), so the bare plural prefixes were valid fielded
-# searches in released paperless and at the deleted translation layer. On
-# the whoosh-compat registry they are JSON fields addressable only via
-# subpaths, and the bare spelling would demote to an unfielded text search
-# of the words themselves. Rewrite the prefixes live to the same targets
-# migration 0017 chose for the singular whoosh-era spellings (note: ->
-# notes.note:, custom_field: -> custom_fields.value:), values untouched.
-# Trade-off inherited from that migration: custom_fields.value: drops the
-# name-matching half of v2's "name : value" indexing (custom_fields.name:
-# remains available for it). Same lookbehind guard as 0017: not preceded
-# by a word character or dot, so subpath spellings and words that merely
-# end in the prefix are untouched.
+# notes:/custom_fields: were valid fielded searches before this migration.
+# whoosh-compat's registry only exposes them as JSON subpaths, so a bare
+# prefix would demote to an unfielded text search. Rewrite live to the
+# equivalent subpath (notes: -> notes.note:, custom_fields: ->
+# custom_fields.value:); custom_fields.name: remains available separately.
+# Not preceded by a word character or dot, so subpath spellings and words
+# merely ending in the prefix are untouched.
 _BARE_JSON_PREFIX_RES: Final = (
     (regex.compile(r"(?<![.\w])notes:(?!\.)"), "notes.note:"),
     (regex.compile(r"(?<![.\w])custom_fields:(?!\.)"), "custom_fields.value:"),

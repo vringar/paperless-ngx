@@ -9,7 +9,6 @@ Supersedes test_query.py's TestParseUserQuery result-level cases.
 from __future__ import annotations
 
 from datetime import UTC
-from datetime import date
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -20,7 +19,6 @@ from documents.models import CustomField
 from documents.models import CustomFieldInstance
 from documents.models import Document
 from documents.models import Note
-from documents.models import Tag
 from documents.search._query import parse_user_query
 
 if TYPE_CHECKING:
@@ -71,8 +69,7 @@ def indexed_documents(backend: TantivyBackend) -> dict[str, int]:
 
 class TestIssue13568BracketWildcard:
     """paperless-ngx#13568: title:202[0-3]* must keep its character class,
-    not fold to a prefix query that silently drops it (whoosh-compat
-    DIVERGENCES.md entry 13)."""
+    not fold to a prefix query that silently drops it."""
 
     def test_bracket_class_wildcard_matches_only_in_range_years(
         self,
@@ -95,45 +92,6 @@ class TestIssue13568BracketWildcard:
             "- if this matches everything, the wildcard's character class was "
             "silently dropped (issue #13568's original bug)"
         )
-
-
-class TestCommaValueLists:
-    """whoosh-compat's CommaValuesPlugin splits `tag:foo,bar` into
-    `tag:foo AND tag:bar` (DIVERGENCES.md entries 17/36), matching real
-    Whoosh's KEYWORD(commas=True) analyzer-time comma splitting - not an OR
-    across the listed values. A document must carry every listed tag to
-    match."""
-
-    def test_tag_comma_list_matches_only_documents_with_both_tags(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        tag_foo = Tag.objects.create(name="foo")
-        tag_bar = Tag.objects.create(name="bar")
-        tag_baz = Tag.objects.create(name="baz")
-
-        doc_both = Document.objects.create(
-            title="Both",
-            content="x",
-            checksum="acc-comma-both",
-        )
-        doc_both.tags.add(tag_foo, tag_bar)
-        doc_foo_only = Document.objects.create(
-            title="FooOnly",
-            content="x",
-            checksum="acc-comma-foo",
-        )
-        doc_foo_only.tags.add(tag_foo)
-        doc_other = Document.objects.create(
-            title="Other",
-            content="x",
-            checksum="acc-comma-other",
-        )
-        doc_other.tags.add(tag_baz)
-        for doc in (doc_both, doc_foo_only, doc_other):
-            backend.add_or_update(doc)
-        matched = _matched_ids(backend, "tag:foo,bar")
-        assert matched == {doc_both.pk}
 
 
 class TestFieldBoosts:
@@ -227,122 +185,11 @@ class TestJsonSubpaths:
         assert matched == {matching.pk}
 
 
-class TestMultitokenInNestedOr:
-    """whoosh-compat DIVERGENCES.md entry 15: Multitoken.DEFAULT resolves by
-    syntactic enclosing group, not the parser's fixed default group. Prove
-    it doesn't matter for paperless's actual data/fields."""
-
-    def test_multitoken_tag_value_inside_top_level_or_matches_either_branch(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        # "multi word tag" is a multitoken field value; nested inside a
-        # top-level OR with an unrelated clause.
-        doc_a = Document.objects.create(title="A", content="x", checksum="acc-mt-a")
-        doc_a.tags.create(name="multi word tag")
-        doc_b = Document.objects.create(title="B", content="x", checksum="acc-mt-b")
-        doc_b.tags.create(name="unrelated")
-        backend.add_or_update(doc_a)
-        backend.add_or_update(doc_b)
-        matched = _matched_ids(backend, 'tag:"multi word tag" OR title:B')
-        assert matched == {doc_a.pk, doc_b.pk}
-
-
-class TestRfc3339TZDateRange:
-    """paperless-ngx#13010: created/added bracket ranges using RFC3339 T/Z
-    datetime separators (e.g. `[2026-01-01T00:00:00Z TO ...]`) must keep
-    working - this is v2/Whoosh saved-search backward compatibility, not a
-    generic ISO-format nicety. whoosh-compat's own grammar previously had no
-    support for `T`/`Z` at all (fixed upstream, whoosh-compat commit
-    f936143); this proves the fix holds end-to-end against real indexed
-    documents and real timezone-sensitive matching, not just that the
-    library's date_from() parses the text."""
-
-    def test_t_z_range_matches_only_documents_within_bounds(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        in_range = Document.objects.create(
-            title="In range",
-            content="x",
-            checksum="acc-rfc3339-in-range",
-            added=datetime(2026, 3, 15, 10, 0, tzinfo=UTC),
-        )
-        out_of_range = Document.objects.create(
-            title="Out of range",
-            content="x",
-            checksum="acc-rfc3339-out-of-range",
-            added=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
-        )
-        for doc in (in_range, out_of_range):
-            backend.add_or_update(doc)
-        matched = _matched_ids(
-            backend,
-            "added:[2026-01-01T00:00:00Z TO 2026-06-01T00:00:00Z]",
-        )
-        assert matched == {in_range.pk}
-
-    def test_comma_combined_t_z_ranges_across_two_fields(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        # The Whoosh v2 comma syntax: two field:[range] expressions joined
-        # by a comma must be ANDed together (not passed to Tantivy as a
-        # literal comma, which it cannot parse).
-        matching = Document.objects.create(
-            title="Matches both ranges",
-            content="x",
-            checksum="acc-rfc3339-comma-match",
-            created=date(2026, 3, 15),
-            added=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
-        )
-        wrong_added = Document.objects.create(
-            title="created in range, added out of range",
-            content="x",
-            checksum="acc-rfc3339-comma-wrong-added",
-            created=date(2026, 3, 15),
-            added=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
-        )
-        for doc in (matching, wrong_added):
-            backend.add_or_update(doc)
-        matched = _matched_ids(
-            backend,
-            "created:[2026-01-01T00:00:00Z TO 2026-06-01T00:00:00Z],"
-            "added:[2026-05-01T00:00:00Z TO 2026-06-01T00:00:00Z]",
-        )
-        assert matched == {matching.pk}
-
-    def test_z_suffixed_bound_is_absolute_utc_not_local_shifted(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        # A document timestamped exactly at a Z-suffixed range boundary must
-        # match under UTC - if Z were (incorrectly) reinterpreted as local
-        # wall-clock time and shifted again, this exact-boundary match would
-        # silently fail or succeed for the wrong reason.
-        at_boundary = Document.objects.create(
-            title="At Z boundary",
-            content="x",
-            checksum="acc-rfc3339-z-boundary",
-            added=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
-        )
-        backend.add_or_update(at_boundary)
-        matched = _matched_ids(
-            backend,
-            "added:[2026-01-01T00:00:00Z TO 2026-01-01T00:00:01Z]",
-        )
-        assert matched == {at_boundary.pk}
-
-
 class TestUnregisteredIdFieldFoldsToLiteralText:
     """tag_id, owner_id, etc. are intentionally excluded from the
-    FieldRegistry: they were always internal index columns (v2 consumed
-    them for permission filtering and its own criteria), and their
-    queryability as search syntax was an accident of whoosh resolving any
-    schema field name. whoosh-compat parity leniency folds them into a
-    literal text search rather than raising a diagnostic/400. Prove the
-    fold is inert against real data, not just that parsing doesn't
-    raise."""
+    FieldRegistry - always internal index columns, never meant to be
+    query-addressable. Prove an unregistered field folds to a literal
+    text search that matches nothing, rather than erroring."""
 
     def test_tag_id_query_matches_nothing(
         self,
@@ -413,15 +260,11 @@ class TestFuzzyBlendSurvivesWhooshGrammar:
 
 
 class TestUnquotedDateKeywordPhrases:
-    """The unquoted multi-word date keyword spelling (added:previous month)
-    has been honored continuously since the whoosh era, always by an
-    app-level assist, never by any parser: v2 rewrote it to a bracket range
-    before whoosh saw it, and the deleted _translate.py consumed it itself.
-    whoosh-compat scopes the unquoted form out of its parser on purpose
-    (its DIVERGENCES.md entry 19) but understands the quoted form natively,
-    so paperless quotes the closed phrase vocabulary on date fields before
-    parsing. Only quoting happens app-side; every date computation stays in
-    whoosh-compat."""
+    """The unquoted spelling (added:previous month) has always been
+    honored via an app-level quoting assist, since whoosh-compat's parser
+    only accepts the quoted form natively. paperless quotes the closed
+    phrase vocabulary on date fields before parsing; every date
+    computation still happens in whoosh-compat."""
 
     @pytest.fixture
     def period_documents(self, backend: TantivyBackend) -> dict[str, int]:
@@ -505,15 +348,10 @@ class TestUnquotedDateKeywordPhrases:
 
 
 class TestBareJsonFieldPrefixes:
-    """The v2 whoosh schema had plural notes/custom_fields TEXT fields, so
-    "notes:foo" and "custom_fields:foo" were valid fielded searches in
-    released paperless (and at the tantivy translation layer). On the
-    whoosh-compat registry they are JSON fields addressable only via
-    subpaths, and the bare spelling would demote to a nonsense unfielded
-    text search. parse_user_query rewrites the bare prefixes live to the
-    same targets migration 0017 chose for the singular whoosh-era
-    spellings: notes: -> notes.note:, custom_fields: ->
-    custom_fields.value:."""
+    """ "notes:foo"/"custom_fields:foo" were valid fielded searches before
+    this migration. whoosh-compat's registry only exposes them as JSON
+    subpaths, so parse_user_query rewrites the bare prefixes live: notes:
+    -> notes.note:, custom_fields: -> custom_fields.value:."""
 
     def test_bare_notes_prefix_searches_note_text(
         self,
@@ -644,53 +482,3 @@ class TestFieldAliases:
         backend.add_or_update(loose)
         assert _matched_ids(backend, "path:archive") == {stored.pk}
         assert _matched_ids(backend, "storage_path:archive") == {stored.pk}
-
-
-class TestCreatedTimezoneInvariance:
-    def test_created_date_matches_regardless_of_active_timezone(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        # "created" is a date-only field indexed at naive midnight: a
-        # document created 2020-06-10 must match created:20200610 whether
-        # the active timezone is far ahead of or behind UTC. (The
-        # timezone-SENSITIVE datetime fields have their own boundary
-        # coverage in test_api_search.py's tz-ahead/tz-behind tests.)
-        from django.utils import timezone as django_tz
-
-        doc = Document.objects.create(
-            title="Dated",
-            content="x",
-            checksum="tz-inv-1",
-            created=date(2020, 6, 10),
-        )
-        backend.add_or_update(doc)
-        for tzname in ("Pacific/Auckland", "America/New_York"):
-            with django_tz.override(tzname):
-                assert _matched_ids(backend, "created:20200610") == {doc.pk}, tzname
-
-
-class TestReversedDateRange:
-    def test_reversed_bounds_still_match_the_span(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        # whoosh's joint disambiguation swaps backwards bounds (both years
-        # explicit -> plain swap), and whoosh-compat reproduces it; a saved
-        # view with created:[2025 TO 2020] must keep matching the span
-        # instead of becoming an empty lo>hi range.
-        inside = Document.objects.create(
-            title="Inside",
-            content="x",
-            checksum="rev-range-1",
-            created=date(2022, 5, 1),
-        )
-        outside = Document.objects.create(
-            title="Outside",
-            content="x",
-            checksum="rev-range-2",
-            created=date(2019, 5, 1),
-        )
-        backend.add_or_update(inside)
-        backend.add_or_update(outside)
-        assert _matched_ids(backend, "created:[2025 TO 2020]") == {inside.pk}

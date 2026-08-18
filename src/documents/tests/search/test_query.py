@@ -328,12 +328,10 @@ class TestSearchQueryErrors:
 
 
 class TestEmitErrorContract:
-    """whoosh-compat's emit() documents a two-part host contract: BOTH a
-    non-empty diagnostics list AND the QueryEmitError/UnsupportedQueryError
-    pair raised by emit() itself are user-input errors. Every one must
-    surface as SearchQueryError (HTTP 400), with library-internal
-    vocabulary (DIVERGENCES.md references, fast=True host advice) kept out
-    of the user-facing message."""
+    """A diagnostics list, or a QueryEmitError/UnsupportedQueryError from
+    emit(), are both user-input errors and must surface as
+    SearchQueryError (HTTP 400), with library-internal wording stripped
+    from the message."""
 
     @pytest.fixture
     def query_index(self) -> tantivy.Index:
