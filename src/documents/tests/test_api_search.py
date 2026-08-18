@@ -2053,6 +2053,13 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
         response = self.client.get("/api/search/?query=no")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def _assert_query_finds(self, doc: Document, query: str) -> None:
+        get_backend().add_or_update(doc)
+        response = self.client.get("/api/documents/", {"query": query})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [r["id"] for r in response.data["results"]]
+        self.assertIn(doc.id, ids)
+
     def test_search_by_asn(self) -> None:
         doc = Document.objects.create(
             title="Has ASN",
@@ -2060,12 +2067,7 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
             checksum="asn-checksum",
             archive_serial_number=555,
         )
-        backend = get_backend()
-        backend.add_or_update(doc)
-        response = self.client.get("/api/documents/", {"query": "asn:555"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        ids = [r["id"] for r in response.data["results"]]
-        self.assertIn(doc.id, ids)
+        self._assert_query_finds(doc, "asn:555")
 
     def test_search_by_page_count(self) -> None:
         doc = Document.objects.create(
@@ -2074,12 +2076,7 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
             checksum="page-count-checksum",
             page_count=42,
         )
-        backend = get_backend()
-        backend.add_or_update(doc)
-        response = self.client.get("/api/documents/", {"query": "page_count:42"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        ids = [r["id"] for r in response.data["results"]]
-        self.assertIn(doc.id, ids)
+        self._assert_query_finds(doc, "page_count:42")
 
     def test_search_by_original_filename(self) -> None:
         doc = Document.objects.create(
@@ -2088,15 +2085,7 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
             checksum="filename-checksum",
             original_filename="quarterly-report.pdf",
         )
-        backend = get_backend()
-        backend.add_or_update(doc)
-        response = self.client.get(
-            "/api/documents/",
-            {"query": "original_filename:quarterly-report.pdf"},
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        ids = [r["id"] for r in response.data["results"]]
-        self.assertIn(doc.id, ids)
+        self._assert_query_finds(doc, "original_filename:quarterly-report.pdf")
 
     def test_search_by_checksum(self) -> None:
         doc = Document.objects.create(
@@ -2104,12 +2093,4 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
             content="content",
             checksum="deadbeef1234",
         )
-        backend = get_backend()
-        backend.add_or_update(doc)
-        response = self.client.get(
-            "/api/documents/",
-            {"query": "checksum:deadbeef1234"},
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        ids = [r["id"] for r in response.data["results"]]
-        self.assertIn(doc.id, ids)
+        self._assert_query_finds(doc, "checksum:deadbeef1234")
