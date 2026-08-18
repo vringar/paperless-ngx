@@ -111,6 +111,40 @@ def _build_cjk_query(
         return None
 
 
+def _try_parse_fuzzy_query(
+    index: tantivy.Index,
+    raw_query: str,
+) -> tantivy.Query | None:
+    """Build the fuzzy blend clause from ``raw_query``, or None if it can't.
+
+    The fuzzy blend hands ``raw_query`` directly to tantivy's own query
+    parser (there's no clean AST-level fuzzy equivalent to whoosh-compat's
+    parse tree, and fuzzy matching was always an approximate, secondary,
+    0.1-boosted clause). But raw_query is whoosh grammar, not tantivy
+    grammar: it can contain date keywords (``today``), whoosh ranges
+    (``[2005 to 2009]``), or bracket-class wildcards (``202[0-1]*``) that
+    tantivy's parser rejects with a ValueError. Rather than let that escape
+    parse_user_query and fail the query's EXACT clause too (see paperless-
+    ngx's whoosh-compat migration regression), degrade gracefully: skip the
+    fuzzy clause and keep the exact/CJK clauses. Only ValueError is caught
+    — a broad except here would also hide real bugs.
+    """
+    try:
+        return index.parse_query(
+            raw_query,
+            DEFAULT_SEARCH_FIELDS,
+            field_boosts=_FIELD_BOOSTS,
+            fuzzy_fields={f: (True, 1, True) for f in DEFAULT_SEARCH_FIELDS},
+        )
+    except ValueError:
+        logger.debug(
+            "Skipping fuzzy search clause: raw query is not valid tantivy "
+            "query syntax: %r",
+            raw_query,
+        )
+        return None
+
+
 def build_permission_filter(
     schema: tantivy.Schema,
     user: AbstractBaseUser,
@@ -233,9 +267,13 @@ def parse_user_query(
     4. Optional fuzzy blend (ADVANCED_FUZZY_SEARCH_THRESHOLD) re-parses
        raw_query directly via index.parse_query — there's no clean AST-level
        fuzzy equivalent, and fuzzy matching was always an approximate,
-       secondary clause.
+       secondary clause. raw_query still carries whoosh grammar (date
+       keywords, bracket-class wildcards, etc.) that tantivy's own parser
+       cannot parse; when that happens the fuzzy clause is skipped rather
+       than letting the ValueError escape and fail the whole query (see
+       _try_parse_fuzzy_query).
     5. Optional CJK bigram clause — unchanged from before this migration,
-       never went through the old translate_query() either.
+       never went through the pre-whoosh-compat translation layer either.
     """
     registry = get_field_registry(settings.SEARCH_LANGUAGE)
     result = wc.parse(
@@ -265,13 +303,11 @@ def parse_user_query(
 
     threshold = settings.ADVANCED_FUZZY_SEARCH_THRESHOLD
     if threshold is not None:
-        fuzzy = index.parse_query(
-            raw_query,
-            DEFAULT_SEARCH_FIELDS,
-            field_boosts=_FIELD_BOOSTS,
-            fuzzy_fields={f: (True, 1, True) for f in DEFAULT_SEARCH_FIELDS},
-        )
-        clauses.append((tantivy.Occur.Should, tantivy.Query.boost_query(fuzzy, 0.1)))
+        fuzzy = _try_parse_fuzzy_query(index, raw_query)
+        if fuzzy is not None:
+            clauses.append(
+                (tantivy.Occur.Should, tantivy.Query.boost_query(fuzzy, 0.1)),
+            )
 
     if cjk_query is not None:
         clauses.append((tantivy.Occur.Should, cjk_query))

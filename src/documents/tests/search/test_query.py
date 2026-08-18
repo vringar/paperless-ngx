@@ -36,13 +36,28 @@ class TestParseUserQuery:
     def test_returns_tantivy_query(self, query_index: tantivy.Index) -> None:
         assert isinstance(parse_user_query(query_index, "invoice", UTC), tantivy.Query)
 
+    @pytest.mark.parametrize(
+        "raw_query",
+        [
+            pytest.param("invoice", id="plain_text"),
+            pytest.param("created:today", id="date_keyword"),
+            pytest.param("created:[2005 to 2009]", id="whoosh_date_range"),
+            pytest.param('added:"previous month"', id="quoted_date_phrase"),
+            pytest.param("title:202[0-1]*", id="bracket_class_wildcard"),
+        ],
+    )
     def test_fuzzy_mode_does_not_raise(
         self,
         query_index: tantivy.Index,
         settings,
+        raw_query: str,
     ) -> None:
+        # These are all valid whoosh grammar that tantivy's own query parser
+        # (used only by the fuzzy blend clause) cannot parse; the fuzzy
+        # clause must degrade gracefully instead of raising and failing the
+        # whole query. See _try_parse_fuzzy_query.
         settings.ADVANCED_FUZZY_SEARCH_THRESHOLD = 0.5
-        assert isinstance(parse_user_query(query_index, "invoice", UTC), tantivy.Query)
+        assert isinstance(parse_user_query(query_index, raw_query, UTC), tantivy.Query)
 
     def test_date_rewriting_applied_before_tantivy_parse(
         self,
