@@ -126,15 +126,6 @@ class TestParseUserQuery:
         kinds = {type(e) for e in exc_info.value.errors}
         assert kinds == {InvalidDateQuery, InvalidNumberQuery}
 
-    def test_document_type_query_via_type_alias_matches(
-        self,
-        query_index: tantivy.Index,
-    ) -> None:
-        # Field alias handling now goes through the FieldRegistry, not
-        # FIELD_ALIASES string substitution — prove it still resolves.
-        q = parse_user_query(query_index, "type:invoice", UTC)
-        assert isinstance(q, tantivy.Query)
-
     def test_asn_field_is_query_addressable(
         self,
         query_index: tantivy.Index,

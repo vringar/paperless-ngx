@@ -126,3 +126,25 @@ class TestSchemaMatchesPublicFields:
         searcher = index.searcher()
         results = searcher.search(tantivy.Query.term_query(schema, "asn", 42), limit=1)
         assert len(results.hits) == 1
+
+
+class TestFastFlagAgreement:
+    def test_every_public_field_fast_flag_matches_the_built_schema(self) -> None:
+        # whoosh-compat's registry trusts PublicField.fast when resolving
+        # field:* existence checks (its FAST_FIELD strategy); a fast=True
+        # entry whose actual tantivy column is not fast would make those
+        # searches silently match nothing at search time. build_schema()
+        # only honors the flag in its U64 and DATE branches today, so this
+        # pins the agreement for EVERY kind: a future fast=True
+        # TEXT/KEYWORD/JSON entry the builder silently ignores fails here
+        # instead of at a user's query.
+        state = build_schema().__reduce__()[1][0]
+        schema_fast = {
+            field["name"]: bool(field["options"].get("fast", False))
+            for field in state["inner"]
+        }
+        for public_field in PUBLIC_FIELDS:
+            assert schema_fast[public_field.name] == public_field.fast, (
+                f"{public_field.name}: PublicField.fast={public_field.fast} but the"
+                f" built schema says fast={schema_fast[public_field.name]}"
+            )

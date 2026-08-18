@@ -583,3 +583,115 @@ class TestBareJsonFieldPrefixes:
         backend.add_or_update(doc)
         assert _matched_ids(backend, "notes.user:bob") == {doc.pk}
         assert _matched_ids(backend, "notes.note:remark") == {doc.pk}
+
+
+class TestFieldAliases:
+    """type:/path: are registry aliases for document_type:/storage_path:.
+    The only other alias coverage is parse-shape; these prove resolution
+    end-to-end against a real index."""
+
+    def test_type_alias_and_canonical_name_match_the_same_document(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        from documents.models import DocumentType
+
+        invoice_type = DocumentType.objects.create(name="invoice")
+        # Discriminating shape: document_type is itself a default search
+        # field, so if alias resolution ever broke and "type:invoice"
+        # demoted to unfielded text, the token would STILL match the typed
+        # document through the field value. The decoy carries the query
+        # word in content, so a demoted search matches BOTH documents and
+        # the exact-set assertions fail. (The title avoids stemming to
+        # "type": english stems Typed -> type.)
+        typed = Document.objects.create(
+            title="First",
+            content="quarterly statement",
+            checksum="alias-type-1",
+            document_type=invoice_type,
+        )
+        decoy = Document.objects.create(
+            title="Second",
+            content="invoice mentioned in body",
+            checksum="alias-type-2",
+        )
+        backend.add_or_update(typed)
+        backend.add_or_update(decoy)
+        assert _matched_ids(backend, "type:invoice") == {typed.pk}
+        assert _matched_ids(backend, "document_type:invoice") == {typed.pk}
+
+    def test_path_alias_and_canonical_name_match_the_same_document(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        from documents.models import StoragePath
+
+        archive = StoragePath.objects.create(name="archive", path="archive/{title}")
+        stored = Document.objects.create(
+            title="Stored",
+            content="quarterly statement",
+            checksum="alias-path-1",
+            storage_path=archive,
+        )
+        # storage_path is NOT a default search field today, so a demoted
+        # "path:archive" already matches nothing; the content decoy keeps
+        # this test discriminating even if it ever joins the defaults.
+        loose = Document.objects.create(
+            title="Loose",
+            content="archive mentioned in body",
+            checksum="alias-path-2",
+        )
+        backend.add_or_update(stored)
+        backend.add_or_update(loose)
+        assert _matched_ids(backend, "path:archive") == {stored.pk}
+        assert _matched_ids(backend, "storage_path:archive") == {stored.pk}
+
+
+class TestCreatedTimezoneInvariance:
+    def test_created_date_matches_regardless_of_active_timezone(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        # "created" is a date-only field indexed at naive midnight: a
+        # document created 2020-06-10 must match created:20200610 whether
+        # the active timezone is far ahead of or behind UTC. (The
+        # timezone-SENSITIVE datetime fields have their own boundary
+        # coverage in test_api_search.py's tz-ahead/tz-behind tests.)
+        from django.utils import timezone as django_tz
+
+        doc = Document.objects.create(
+            title="Dated",
+            content="x",
+            checksum="tz-inv-1",
+            created=date(2020, 6, 10),
+        )
+        backend.add_or_update(doc)
+        for tzname in ("Pacific/Auckland", "America/New_York"):
+            with django_tz.override(tzname):
+                assert _matched_ids(backend, "created:20200610") == {doc.pk}, tzname
+
+
+class TestReversedDateRange:
+    def test_reversed_bounds_still_match_the_span(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        # whoosh's joint disambiguation swaps backwards bounds (both years
+        # explicit -> plain swap), and whoosh-compat reproduces it; a saved
+        # view with created:[2025 TO 2020] must keep matching the span
+        # instead of becoming an empty lo>hi range.
+        inside = Document.objects.create(
+            title="Inside",
+            content="x",
+            checksum="rev-range-1",
+            created=date(2022, 5, 1),
+        )
+        outside = Document.objects.create(
+            title="Outside",
+            content="x",
+            checksum="rev-range-2",
+            created=date(2019, 5, 1),
+        )
+        backend.add_or_update(inside)
+        backend.add_or_update(outside)
+        assert _matched_ids(backend, "created:[2025 TO 2020]") == {inside.pk}
