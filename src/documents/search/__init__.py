@@ -6,11 +6,11 @@ from documents.search._backend import TantivyRelevanceList
 from documents.search._backend import WriteBatch
 from documents.search._backend import get_backend
 from documents.search._backend import reset_backend
-from documents.search._query import InvalidDateQuery
-from documents.search._query import InvalidNumberQuery
-from documents.search._query import MultipleSearchQueryErrors
-from documents.search._query import SearchQueryError
-from documents.search._query import search_query_error_messages
+from documents.search._errors import InvalidDateQuery
+from documents.search._errors import InvalidNumberQuery
+from documents.search._errors import MultipleSearchQueryErrors
+from documents.search._errors import SearchQueryError
+from documents.search._errors import search_query_error_messages
 from documents.search._schema import needs_rebuild
 from documents.search._schema import wipe_index
 

@@ -8,11 +8,11 @@ import pytest
 import tantivy
 import time_machine
 
-from documents.search._query import InvalidDateQuery
-from documents.search._query import InvalidNumberQuery
-from documents.search._query import MultipleSearchQueryErrors
-from documents.search._query import SearchQueryError
-from documents.search._query import build_permission_filter
+from documents.search._backend import build_permission_filter
+from documents.search._errors import InvalidDateQuery
+from documents.search._errors import InvalidNumberQuery
+from documents.search._errors import MultipleSearchQueryErrors
+from documents.search._errors import SearchQueryError
 from documents.search._query import parse_simple_text_highlight_query
 from documents.search._query import parse_user_query
 from documents.search._schema import build_schema

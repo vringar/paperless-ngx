@@ -14,65 +14,16 @@ from whoosh_compat.errors import DiagnosticKind
 from whoosh_compat.errors import QueryEmitError
 from whoosh_compat.errors import UnsupportedQueryError
 
+from documents.search._errors import InvalidDateQuery
+from documents.search._errors import InvalidNumberQuery
+from documents.search._errors import MultipleSearchQueryErrors
+from documents.search._errors import SearchQueryError
 from documents.search._fields import PUBLIC_FIELDS
 from documents.search._registry import get_field_registry
 from documents.search._tokenizer import simple_search_tokens
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-    from collections.abc import Sequence
     from datetime import tzinfo
-
-    from django.contrib.auth.base_user import AbstractBaseUser
-
-
-class SearchQueryError(ValueError):
-    """
-    Base for user-fixable search query errors.
-
-    Carries a message safe to surface to the user (no internal details). The
-    view layer catches this and returns an HTTP 400, so any future subclass
-    gets the same treatment.
-    """
-
-
-class InvalidDateQuery(SearchQueryError):
-    """Raised when a date field value or range bound cannot be parsed."""
-
-    def __init__(self, field: str | None, value: str | None) -> None:
-        self.field = field
-        self.value = value
-        super().__init__(f"Invalid date value {value!r} for field {field!r}.")
-
-
-class InvalidNumberQuery(SearchQueryError):
-    """Raised when a numeric field value or range bound cannot be parsed."""
-
-    def __init__(self, field: str | None, value: str | None) -> None:
-        self.field = field
-        self.value = value
-        super().__init__(f"Invalid numeric value {value!r} for field {field!r}.")
-
-
-class MultipleSearchQueryErrors(SearchQueryError):
-    """Aggregates every user-fixable error from one parse, not just the first."""
-
-    def __init__(self, errors: Sequence[SearchQueryError]) -> None:
-        self.errors = tuple(errors)
-        super().__init__("; ".join(str(e) for e in self.errors))
-
-
-def search_query_error_messages(e: SearchQueryError) -> list[str]:
-    """The user-facing message list for a SearchQueryError.
-
-    Every offending value's message, not just the first, so the user can
-    fix them all in one round-trip. Shared by every view that maps
-    SearchQueryError to an HTTP 400.
-    """
-    if isinstance(e, MultipleSearchQueryErrors):
-        return [str(sub) for sub in e.errors]
-    return [str(e)]
-
 
 logger = logging.getLogger("paperless.search")
 
@@ -267,47 +218,6 @@ def _try_parse_fuzzy_query(
             fuzzy_text,
         )
         return None
-
-
-def build_permission_filter(
-    schema: tantivy.Schema,
-    user: AbstractBaseUser,
-    viewer_group_ids: Iterable[int] = (),
-) -> tantivy.Query:
-    """
-    Build a query filter for user document permissions.
-
-    Creates a query that matches only documents visible to the specified user
-    according to paperless-ngx permission rules:
-    - Public documents (no owner) are visible to all users
-    - Private documents are visible to their owner
-    - Documents explicitly shared with the user are visible
-    - Documents shared with one of the user's current groups are visible
-
-    Args:
-        schema: Tantivy schema for field validation
-        user: User to check permissions for
-        viewer_group_ids: Current group memberships for the user
-
-    Returns:
-        Tantivy query that filters results to visible documents
-    """
-    owner_any = tantivy.Query.exists_query("owner_id")
-    no_owner = tantivy.Query.boolean_query(
-        [
-            (tantivy.Occur.Must, tantivy.Query.all_query()),
-            (tantivy.Occur.MustNot, owner_any),
-        ],
-    )
-    owned = tantivy.Query.term_query(schema, "owner_id", user.pk)
-    shared = tantivy.Query.term_query(schema, "viewer_id", user.pk)
-    group_shared = [
-        tantivy.Query.term_query(schema, "viewer_group_id", group_id)
-        for group_id in viewer_group_ids
-    ]
-    return tantivy.Query.disjunction_max_query(
-        [no_owner, owned, shared, *group_shared],
-    )
 
 
 _DEFAULT_SEARCH_FIELDS: Final[list[str]] = [
