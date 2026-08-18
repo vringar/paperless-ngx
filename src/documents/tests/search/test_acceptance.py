@@ -408,3 +408,95 @@ class TestFuzzyBlendSurvivesWhooshGrammar:
             )
             backend.add_or_update(receipt_only)
             assert _matched_ids(backend, "added:today total NOT receipt") == set()
+
+
+class TestUnquotedDateKeywordPhrases:
+    """The unquoted multi-word date keyword spelling (added:previous month)
+    has been honored continuously since the whoosh era, always by an
+    app-level assist, never by any parser: v2 rewrote it to a bracket range
+    before whoosh saw it, and the deleted _translate.py consumed it itself.
+    whoosh-compat scopes the unquoted form out of its parser on purpose
+    (its DIVERGENCES.md entry 19) but understands the quoted form natively,
+    so paperless quotes the closed phrase vocabulary on date fields before
+    parsing. Only quoting happens app-side; every date computation stays in
+    whoosh-compat."""
+
+    @pytest.fixture
+    def period_documents(self, backend: TantivyBackend) -> dict[str, int]:
+        with time_machine.travel(FROZEN_NOW, tick=False):
+            in_may = Document.objects.create(
+                title="May Doc",
+                content="statement",
+                checksum="kw-may",
+                archive_serial_number=910,
+                added=datetime(2026, 5, 20, 12, 0, tzinfo=UTC),
+            )
+            in_june = Document.objects.create(
+                title="June Doc",
+                content="statement",
+                checksum="kw-june",
+                archive_serial_number=911,
+                added=datetime(2026, 6, 10, 12, 0, tzinfo=UTC),
+            )
+            for doc in (in_may, in_june):
+                backend.add_or_update(doc)
+        return {"in_may": in_may.pk, "in_june": in_june.pk}
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            pytest.param("added:previous month", id="unquoted"),
+            pytest.param('added:"previous month"', id="quoted"),
+            pytest.param("added:Previous Month", id="unquoted-mixed-case"),
+        ],
+    )
+    def test_unquoted_matches_the_same_documents_as_quoted(
+        self,
+        backend: TantivyBackend,
+        period_documents: dict[str, int],
+        query: str,
+    ) -> None:
+        with time_machine.travel(FROZEN_NOW, tick=False):
+            assert _matched_ids(backend, query) == {period_documents["in_may"]}
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            pytest.param("added:this month", id="this-month"),
+            pytest.param("added:this year", id="this-year"),
+            pytest.param("added:previous week", id="previous-week"),
+            pytest.param("added:previous quarter", id="previous-quarter"),
+            pytest.param("added:previous year", id="previous-year"),
+            pytest.param("created:previous month", id="created-field"),
+            pytest.param("modified:previous month", id="modified-field"),
+        ],
+    )
+    def test_every_phrase_and_date_field_parses_without_error(
+        self,
+        backend: TantivyBackend,
+        period_documents: dict[str, int],
+        query: str,
+    ) -> None:
+        # The whole vocabulary times every date field must at least parse
+        # and search cleanly (no SearchQueryError -> no HTTP 400); exact
+        # window semantics are whoosh-compat's, pinned in its own suite.
+        with time_machine.travel(FROZEN_NOW, tick=False):
+            _matched_ids(backend, query)
+
+    def test_text_field_keyword_words_are_not_rewritten(
+        self,
+        backend: TantivyBackend,
+        period_documents: dict[str, int],
+    ) -> None:
+        # "previous month" after a TEXT field (or unfielded) is ordinary
+        # text, not a date phrase: a title actually containing the words
+        # matches, and the date-window documents do not.
+        with time_machine.travel(FROZEN_NOW, tick=False):
+            wordy = Document.objects.create(
+                title="Notes from the previous month",
+                content="meeting notes",
+                checksum="kw-text",
+                archive_serial_number=912,
+            )
+            backend.add_or_update(wordy)
+            assert _matched_ids(backend, "title:previous month") == {wordy.pk}

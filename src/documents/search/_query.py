@@ -13,6 +13,7 @@ from whoosh_compat.errors import Diagnostic
 from whoosh_compat.errors import DiagnosticKind
 from whoosh_compat.errors import UnsupportedQueryError
 
+from documents.search._fields import PUBLIC_FIELDS
 from documents.search._registry import get_field_registry
 from documents.search._tokenizer import simple_search_tokens
 
@@ -69,6 +70,59 @@ _REGEX_TIMEOUT: Final[float] = 1.0
 # Matches CJK/Hangul characters so queries can be routed to bigram fields.
 # Uses Unicode properties to cover all blocks including Extension B+ planes.
 _CJK_RE: Final = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]+")
+
+# The closed multi-word date-keyword vocabulary, unchanged since paperless
+# v2's rewrite_natural_date_keywords. whoosh-compat's date grammar
+# understands every one of these natively, but only as a QUOTED value
+# (its DIVERGENCES.md entry 19: unquoted multi-word values split at
+# whitespace, faithfully to whoosh); the unquoted spelling has been
+# honored continuously since the whoosh era by an app-level assist, so
+# _quote_date_keyword_phrases below keeps honoring it by inserting the
+# quotes and nothing else. Single-word keywords (today, yesterday) parse
+# unquoted already and need no entry.
+_DATE_KEYWORD_PHRASES: Final = (
+    "previous week",
+    "previous month",
+    "previous quarter",
+    "previous year",
+    "this month",
+    "this year",
+)
+
+# Field names are case-sensitive (matching the parser's own field
+# tagging); the keyword phrase is case-insensitive (matching the date
+# grammar's leniency for the quoted form). Date fields derived from
+# PUBLIC_FIELDS, never hand-listed.
+_DATE_KEYWORD_PHRASE_RE: Final = regex.compile(
+    r"\b("
+    + "|".join(
+        regex.escape(f.name)
+        for f in PUBLIC_FIELDS
+        if f.kind in (wc.FieldKind.DATE, wc.FieldKind.DATETIME)
+    )
+    + r"):((?i:"
+    + "|".join(_DATE_KEYWORD_PHRASES)
+    + r"))\b",
+)
+
+
+def _quote_date_keyword_phrases(raw_query: str) -> str:
+    """Quote unquoted multi-word date keyword phrases on date fields.
+
+    ``added:previous month`` becomes ``added:"previous month"``; the
+    already-quoted spellings don't match the pattern (the colon must be
+    followed directly by the phrase), and the same words after a TEXT
+    field or standing alone are ordinary text and untouched. Only quoting
+    happens here: every date computation stays in whoosh-compat's
+    grammar, which parses exactly this phrase vocabulary as quoted
+    values. This is deliberately NOT a revival of the deleted
+    translation layer, which computed the ranges app-side.
+    """
+    return _DATE_KEYWORD_PHRASE_RE.sub(
+        r'\1:"\2"',
+        raw_query,
+        timeout=_REGEX_TIMEOUT,
+    )
 
 
 def _has_cjk(text: str) -> bool:
@@ -285,7 +339,10 @@ def parse_user_query(
     """
     Parse user query through whoosh-compat, then blend in fuzzy/CJK clauses.
 
-    1. wc.parse() against the shared FieldRegistry (whoosh grammar -> AST).
+    1. Unquoted multi-word date keyword phrases on date fields are quoted
+       (_quote_date_keyword_phrases) so the historically honored
+       "added:previous month" spelling keeps working; then wc.parse()
+       against the shared FieldRegistry (whoosh grammar -> AST).
     2. Any diagnostics (bad dates/numbers) map to SearchQueryError subclasses
        and raise — the view returns HTTP 400 with every offending field
        listed, not just the first.
@@ -303,6 +360,7 @@ def parse_user_query(
        never went through the pre-whoosh-compat translation layer either.
     """
     registry = get_field_registry(settings.SEARCH_LANGUAGE)
+    raw_query = _quote_date_keyword_phrases(raw_query)
     result = wc.parse(
         raw_query,
         registry=registry,

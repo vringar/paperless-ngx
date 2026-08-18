@@ -927,8 +927,9 @@ produ*name
 
 Matching natural date keywords:
 
-Multi-word date keywords must be quoted (e.g. `added:"previous month"`); an
-unquoted multi-word keyword is not recognized as a date keyword.
+Multi-word date keywords work quoted or unquoted after a date field
+(`added:"previous month"` and `added:previous month` are equivalent);
+elsewhere in a query the same words are treated as ordinary search text.
 
 ```
 added:today

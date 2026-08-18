@@ -720,19 +720,6 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
         self.assertEqual(results[0]["id"], 3)
         self.assertEqual(results[0]["title"], "bank statement 3")
 
-    @pytest.mark.xfail(
-        reason=(
-            "whoosh-compat's DateParserPlugin intentionally drops whoosh's "
-            "'free' undelimited-date tagging mode (see "
-            "whoosh_compat.parser.dateparse.DateParserPlugin docstring), so "
-            "an unquoted multi-word date keyword like 'added:previous month' "
-            "no longer parses -- it now needs quoting ('added:\"previous "
-            "month\"'), unlike 'added:\"previous quarter\"' a few tests down "
-            "which already quotes. CONFIRMED REGRESSION vs whoosh-compat "
-            "migration; see task-10-report.md."
-        ),
-        raises=AssertionError,
-    )
     def test_search_added_previous_month_excludes_next_period_start(self) -> None:
         """
         GIVEN:
