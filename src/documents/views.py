@@ -2611,10 +2611,17 @@ class UnifiedSearchViewSet(DocumentViewSet):
         except ValidationError:
             raise
         except SearchQueryError as e:
-            # User-fixable query error (e.g. an unparsable date): surface the
-            # specific message so the user can correct it, rather than a generic
-            # 400 or silently empty results.
-            raise ValidationError({"query": [str(e)]}) from e
+            # User-fixable query error(s) (e.g. unparsable dates/numbers):
+            # surface every offending field's message, not just the first,
+            # so the user can fix them all in one round-trip.
+            from documents.search import MultipleSearchQueryErrors
+
+            messages = (
+                [str(sub) for sub in e.errors]
+                if isinstance(e, MultipleSearchQueryErrors)
+                else [str(e)]
+            )
+            raise ValidationError({"query": messages}) from e
         except Exception as e:
             logger.warning(f"An error occurred listing search results: {e!s}")
             return HttpResponseBadRequest(

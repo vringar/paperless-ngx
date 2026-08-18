@@ -801,6 +801,26 @@ class TestDocumentSearchApi(DirectoriesMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("invalid-date", str(response.data["query"]))
 
+    def test_search_multiple_bad_fields_returns_all_messages(self) -> None:
+        """
+        GIVEN:
+            - One document added
+        WHEN:
+            - Query with multiple bad fields (e.g. invalid date and invalid number)
+        THEN:
+            - 400 Bad Request with error messages for every bad field,
+              so the user can fix them all in one round-trip
+        """
+        response = self.client.get(
+            "/api/documents/",
+            {"query": "created:notadate AND asn:notanumber"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        messages = response.data["query"]
+        self.assertEqual(len(messages), 2)
+        self.assertTrue(any("created" in m for m in messages))
+        self.assertTrue(any("asn" in m for m in messages))
+
     @override_settings(
         TIME_ZONE="UTC",
     )
