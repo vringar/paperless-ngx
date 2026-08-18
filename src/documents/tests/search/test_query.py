@@ -285,9 +285,6 @@ class TestPermissionFilter:
 
 class TestSearchQueryErrors:
     def test_invalid_date_query_is_a_search_query_error(self) -> None:
-        from documents.search._query import InvalidDateQuery
-        from documents.search._query import SearchQueryError
-
         err = InvalidDateQuery("created", "notadate")
         assert isinstance(err, SearchQueryError)
         assert err.field == "created"
@@ -296,9 +293,6 @@ class TestSearchQueryErrors:
         assert "notadate" in str(err)
 
     def test_invalid_number_query_is_a_search_query_error(self) -> None:
-        from documents.search._query import InvalidNumberQuery
-        from documents.search._query import SearchQueryError
-
         err = InvalidNumberQuery("asn", "notanumber")
         assert isinstance(err, SearchQueryError)
         assert err.field == "asn"
@@ -307,11 +301,6 @@ class TestSearchQueryErrors:
         assert "notanumber" in str(err)
 
     def test_multiple_search_query_errors_aggregates(self) -> None:
-        from documents.search._query import InvalidDateQuery
-        from documents.search._query import InvalidNumberQuery
-        from documents.search._query import MultipleSearchQueryErrors
-        from documents.search._query import SearchQueryError
-
         sub_errors = [
             InvalidDateQuery("created", "notadate"),
             InvalidNumberQuery("asn", "notanumber"),
