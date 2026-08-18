@@ -1,6 +1,9 @@
+import pytest
 from whoosh_compat import FieldKind
 
 from documents.search._fields import PUBLIC_FIELDS
+
+BY_NAME = {f.name: f for f in PUBLIC_FIELDS}
 
 
 class TestPublicFields:
@@ -22,25 +25,41 @@ class TestPublicFields:
             if field.kind is not FieldKind.JSON:
                 assert not field.subpaths
 
-    def test_document_type_alias_is_type(self) -> None:
-        field = next(f for f in PUBLIC_FIELDS if f.name == "document_type")
-        assert field.aliases == ("type",)
-
-    def test_storage_path_alias_is_path(self) -> None:
-        field = next(f for f in PUBLIC_FIELDS if f.name == "storage_path")
-        assert field.aliases == ("path",)
-
-    def test_tag_allows_comma_values(self) -> None:
-        field = next(f for f in PUBLIC_FIELDS if f.name == "tag")
-        assert field.comma_values is True
-
-    def test_notes_subpaths(self) -> None:
-        field = next(f for f in PUBLIC_FIELDS if f.name == "notes")
-        assert set(field.subpaths) == {"user", "note"}
-
-    def test_custom_fields_subpaths(self) -> None:
-        field = next(f for f in PUBLIC_FIELDS if f.name == "custom_fields")
-        assert set(field.subpaths) == {"name", "value"}
+    @pytest.mark.parametrize(
+        ("name", "attr", "expected"),
+        [
+            pytest.param(
+                "document_type",
+                "aliases",
+                ("type",),
+                id="document_type-aliases",
+            ),
+            pytest.param(
+                "storage_path",
+                "aliases",
+                ("path",),
+                id="storage_path-aliases",
+            ),
+            pytest.param("tag", "comma_values", True, id="tag-comma_values"),
+            pytest.param(
+                "notes",
+                "subpaths",
+                {"user", "note"},
+                id="notes-subpaths",
+            ),
+            pytest.param(
+                "custom_fields",
+                "subpaths",
+                {"name", "value"},
+                id="custom_fields-subpaths",
+            ),
+        ],
+    )
+    def test_field_attributes(self, name: str, attr: str, expected: object) -> None:
+        actual = getattr(BY_NAME[name], attr)
+        if attr == "subpaths":
+            actual = set(actual)
+        assert actual == expected
 
     def test_no_internal_id_fields_present(self) -> None:
         # tag_id/owner_id/viewer_id/etc. are permission-filter-only fields,

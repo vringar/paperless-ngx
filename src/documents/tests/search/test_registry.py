@@ -6,6 +6,8 @@ from whoosh_compat.fields import ResolvedField
 from documents.search._fields import PUBLIC_FIELDS
 from documents.search._registry import get_field_registry
 
+_BY_NAME = {f.name: f for f in PUBLIC_FIELDS}
+
 
 @pytest.fixture
 def registry() -> FieldRegistry:
@@ -126,13 +128,9 @@ class TestJsonSubpathCoupling:
         # _backend.py's _build_tantivy_doc builds:
         #   doc.add_json("notes", {"note": ..., "user": ...})
         # These literal keys must match PUBLIC_FIELDS' "notes" subpaths exactly.
-        notes_field = next(f for f in PUBLIC_FIELDS if f.name == "notes")
-        assert set(notes_field.subpaths) == {"note", "user"}
+        assert set(_BY_NAME["notes"].subpaths) == {"note", "user"}
 
     def test_custom_fields_dict_keys_match_public_fields_subpaths(self) -> None:
         # _backend.py's _build_tantivy_doc builds:
         #   doc.add_json("custom_fields", {"name": ..., "value": ...})
-        custom_fields_field = next(
-            f for f in PUBLIC_FIELDS if f.name == "custom_fields"
-        )
-        assert set(custom_fields_field.subpaths) == {"name", "value"}
+        assert set(_BY_NAME["custom_fields"].subpaths) == {"name", "value"}
