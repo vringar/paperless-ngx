@@ -339,6 +339,16 @@ def _simple_query_tokens(raw_query: str) -> list[str]:
     return simple_search_tokens(raw_query)
 
 
+def _any_of(clauses: list[tuple[tantivy.Occur, tantivy.Query]]) -> tantivy.Query:
+    """Collapse a clause list: none -> empty, one -> itself (no wasted
+    single-clause boolean_query wrapping), many -> boolean_query(clauses)."""
+    if not clauses:
+        return tantivy.Query.empty_query()
+    if len(clauses) == 1:
+        return clauses[0][1]
+    return tantivy.Query.boolean_query(clauses)
+
+
 def _build_simple_token_query(
     index: tantivy.Index,
     fields: list[str],
@@ -368,9 +378,7 @@ def _build_simple_token_query(
             query = tantivy.Query.boost_query(query, boost)
         field_queries.append((tantivy.Occur.Should, query))
 
-    if len(field_queries) == 1:
-        return field_queries[0][1]
-    return tantivy.Query.boolean_query(field_queries)
+    return _any_of(field_queries)
 
 
 def parse_user_query(
@@ -444,9 +452,7 @@ def parse_user_query(
     if cjk_query is not None:
         clauses.append((tantivy.Occur.Should, cjk_query))
 
-    if len(clauses) == 1:
-        return exact
-    return tantivy.Query.boolean_query(clauses)
+    return _any_of(clauses)
 
 
 def _diagnostics_to_error(diagnostics: tuple[Diagnostic, ...]) -> SearchQueryError:
@@ -507,23 +513,14 @@ def parse_simple_query(
             )
             for token in tokens
         ]
-        simple_query = (
-            token_queries[0][1]
-            if len(token_queries) == 1
-            else tantivy.Query.boolean_query(token_queries)
-        )
-        clauses.append((tantivy.Occur.Should, simple_query))
+        clauses.append((tantivy.Occur.Should, _any_of(token_queries)))
 
     if cjk_fields and _has_cjk(raw_query):
         cjk_q = _build_cjk_query(index, raw_query, cjk_fields)
         if cjk_q is not None:
             clauses.append((tantivy.Occur.Should, cjk_q))
 
-    if not clauses:
-        return tantivy.Query.empty_query()
-    if len(clauses) == 1:
-        return clauses[0][1]
-    return tantivy.Query.boolean_query(clauses)
+    return _any_of(clauses)
 
 
 def parse_simple_text_highlight_query(
