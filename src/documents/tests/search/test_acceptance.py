@@ -10,6 +10,7 @@ now-deleted test_date_grammar_parity.py.
 from __future__ import annotations
 
 from datetime import UTC
+from datetime import date
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -245,6 +246,92 @@ class TestMultitokenInNestedOr:
         backend.add_or_update(doc_b)
         matched = _matched_ids(backend, 'tag:"multi word tag" OR title:B')
         assert matched == {doc_a.pk, doc_b.pk}
+
+
+class TestRfc3339TZDateRange:
+    """paperless-ngx#13010: created/added bracket ranges using RFC3339 T/Z
+    datetime separators (e.g. `[2026-01-01T00:00:00Z TO ...]`) must keep
+    working - this is v2/Whoosh saved-search backward compatibility, not a
+    generic ISO-format nicety. whoosh-compat's own grammar previously had no
+    support for `T`/`Z` at all (fixed upstream, whoosh-compat commit
+    f936143); this proves the fix holds end-to-end against real indexed
+    documents and real timezone-sensitive matching, not just that the
+    library's date_from() parses the text."""
+
+    def test_t_z_range_matches_only_documents_within_bounds(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        in_range = Document.objects.create(
+            title="In range",
+            content="x",
+            checksum="acc-rfc3339-in-range",
+            added=datetime(2026, 3, 15, 10, 0, tzinfo=UTC),
+        )
+        out_of_range = Document.objects.create(
+            title="Out of range",
+            content="x",
+            checksum="acc-rfc3339-out-of-range",
+            added=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+        )
+        for doc in (in_range, out_of_range):
+            backend.add_or_update(doc)
+        matched = _matched_ids(
+            backend,
+            "added:[2026-01-01T00:00:00Z TO 2026-06-01T00:00:00Z]",
+        )
+        assert matched == {in_range.pk}
+
+    def test_comma_combined_t_z_ranges_across_two_fields(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        # The Whoosh v2 comma syntax: two field:[range] expressions joined
+        # by a comma must be ANDed together (not passed to Tantivy as a
+        # literal comma, which it cannot parse).
+        matching = Document.objects.create(
+            title="Matches both ranges",
+            content="x",
+            checksum="acc-rfc3339-comma-match",
+            created=date(2026, 3, 15),
+            added=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+        )
+        wrong_added = Document.objects.create(
+            title="created in range, added out of range",
+            content="x",
+            checksum="acc-rfc3339-comma-wrong-added",
+            created=date(2026, 3, 15),
+            added=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+        )
+        for doc in (matching, wrong_added):
+            backend.add_or_update(doc)
+        matched = _matched_ids(
+            backend,
+            "created:[2026-01-01T00:00:00Z TO 2026-06-01T00:00:00Z],"
+            "added:[2026-05-01T00:00:00Z TO 2026-06-01T00:00:00Z]",
+        )
+        assert matched == {matching.pk}
+
+    def test_z_suffixed_bound_is_absolute_utc_not_local_shifted(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        # A document timestamped exactly at a Z-suffixed range boundary must
+        # match under UTC - if Z were (incorrectly) reinterpreted as local
+        # wall-clock time and shifted again, this exact-boundary match would
+        # silently fail or succeed for the wrong reason.
+        at_boundary = Document.objects.create(
+            title="At Z boundary",
+            content="x",
+            checksum="acc-rfc3339-z-boundary",
+            added=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+        )
+        backend.add_or_update(at_boundary)
+        matched = _matched_ids(
+            backend,
+            "added:[2026-01-01T00:00:00Z TO 2026-01-01T00:00:01Z]",
+        )
+        assert matched == {at_boundary.pk}
 
 
 class TestUnregisteredIdFieldFoldsToLiteralText:
