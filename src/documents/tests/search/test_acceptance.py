@@ -337,10 +337,13 @@ class TestRfc3339TZDateRange:
 
 class TestUnregisteredIdFieldFoldsToLiteralText:
     """tag_id, owner_id, etc. are intentionally excluded from the
-    FieldRegistry - whoosh-compat parity leniency folds them into a literal
-    text search rather than raising a diagnostic/400 (see docs/usage.md's
-    advanced-search section). Prove the fold is inert against real data, not
-    just that parsing doesn't raise."""
+    FieldRegistry: they were always internal index columns (v2 consumed
+    them for permission filtering and its own criteria), and their
+    queryability as search syntax was an accident of whoosh resolving any
+    schema field name. whoosh-compat parity leniency folds them into a
+    literal text search rather than raising a diagnostic/400. Prove the
+    fold is inert against real data, not just that parsing doesn't
+    raise."""
 
     def test_tag_id_query_matches_nothing(
         self,
