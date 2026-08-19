@@ -11,8 +11,7 @@ from django.conf import settings
 from whoosh_compat.emitters.tantivy_ import emit as tantivy_emit
 from whoosh_compat.errors import Diagnostic
 from whoosh_compat.errors import DiagnosticKind
-from whoosh_compat.errors import QueryEmitError
-from whoosh_compat.errors import UnsupportedQueryError
+from whoosh_compat.errors import QueryError
 
 from documents.search._errors import InvalidDateQuery
 from documents.search._errors import InvalidNumberQuery
@@ -112,21 +111,19 @@ def _rewrite_bare_json_field_prefixes(raw_query: str) -> str:
     return raw_query
 
 
-# whoosh-compat's emit() error messages are written for the HOST: they
-# cite the library's own divergence ledger and give registry-configuration
-# advice. Neither belongs in a message shown to a searching user.
-_DIVERGENCE_REF_RE: Final = regex.compile(r"\s*\(DIVERGENCES\.md entry \d+\)")
+def _user_facing_emit_message(d: Diagnostic) -> str:
+    """A user-safe message for an emit-time QueryError's Diagnostic.
 
-
-def _user_facing_emit_message(exc: Exception) -> str:
-    """A user-safe message for a QueryEmitError/UnsupportedQueryError."""
-    message = _DIVERGENCE_REF_RE.sub("", str(exc))
-    if "fast=True" in message:
-        # The exists-check message advises marking the field fast=True, a
-        # host configuration action; the user just needs to know the
-        # search form is unsupported here.
+    whoosh-compat's own Diagnostic.message is developer/log output with no
+    stability guarantee (branch on kind, never parse the message). Only
+    EXISTS_REQUIRES_FAST needs a distinct user-facing rewrite: its message
+    advises marking the field fast=True, a host configuration action the
+    user can't act on; the user just needs to know the search form is
+    unsupported here.
+    """
+    if d.kind is DiagnosticKind.EXISTS_REQUIRES_FAST:
         return "existence searches (field:*) are not supported for this field"
-    return message
+    return d.message
 
 
 def _has_cjk(text: str) -> bool:
@@ -321,8 +318,8 @@ def parse_user_query(
        and raise — the view returns HTTP 400 with every offending field
        listed, not just the first.
     3. emit() turns the AST into a tantivy.Query directly (no string
-       round-trip). UnsupportedQueryError (a construct that parses but can't
-       execute against tantivy, e.g. a text-field range) also maps to a 400.
+       round-trip). QueryError (a construct that parses but can't execute
+       against tantivy, e.g. a text-field range) also maps to a 400.
     4. Optional fuzzy blend (ADVANCED_FUZZY_SEARCH_THRESHOLD) builds a
        plain word string from the parsed AST's free-text tokens
        (whoosh_compat.free_text_tokens) and feeds THAT to
@@ -348,10 +345,13 @@ def parse_user_query(
 
     try:
         exact = tantivy_emit(result.ast, index=index, registry=registry)
-    except (QueryEmitError, UnsupportedQueryError) as e:
-        # emit()'s documented host contract: BOTH of these are user-input
-        # errors, exactly like a parse diagnostic, and both map to a 400.
-        raise SearchQueryError(_user_facing_emit_message(e)) from e
+    except QueryError as e:
+        # emit()'s documented host contract: every reachable-from-query-text
+        # kind here (TEXT_RANGE, PATTERN_TOO_COMPLEX, EXISTS_REQUIRES_FAST)
+        # is a user-input error, exactly like a parse diagnostic, and maps
+        # to a 400. The AST_*/BACKEND_REJECTED backstop kinds cannot occur
+        # here: whoosh-compat only ever hands us the AST it parsed itself.
+        raise SearchQueryError(_user_facing_emit_message(e.diagnostic)) from e
 
     cjk_query = (
         _build_cjk_query(index, raw_query, _CJK_ALL_FIELDS)

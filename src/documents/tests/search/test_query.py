@@ -313,43 +313,46 @@ class TestSearchQueryErrors:
 
 
 class TestEmitErrorContract:
-    """A diagnostics list, or a QueryEmitError/UnsupportedQueryError from
-    emit(), are both user-input errors and must surface as
-    SearchQueryError (HTTP 400), with library-internal wording stripped
-    from the message."""
+    """A diagnostics list, or a QueryError from emit(), are both user-input
+    errors and must surface as SearchQueryError (HTTP 400)."""
 
     def test_query_emit_error_maps_to_search_query_error(
         self,
         query_index: tantivy.Index,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from whoosh_compat.errors import QueryEmitError
+        from whoosh_compat.errors import Cause
+        from whoosh_compat.errors import Diagnostic
+        from whoosh_compat.errors import DiagnosticKind
+        from whoosh_compat.errors import QueryError
 
         import documents.search._query as query_mod
 
         def raise_emit_error(*args: object, **kwargs: object) -> None:
-            raise QueryEmitError("synthetic emit failure")
+            raise QueryError(
+                Diagnostic(
+                    kind=DiagnosticKind.TEXT_RANGE,
+                    cause=Cause.UNSUPPORTED,
+                    message="synthetic emit failure",
+                ),
+            )
 
         monkeypatch.setattr(query_mod, "tantivy_emit", raise_emit_error)
         with pytest.raises(SearchQueryError):
             parse_user_query(query_index, "invoice", UTC)
 
-    @pytest.mark.parametrize(
-        ("query", "leaked_fragment"),
-        [
-            pytest.param("title:[a TO b]", "DIVERGENCES", id="text-range-doc-ref"),
-            pytest.param("notes.note:wild*", "DIVERGENCES", id="json-wildcard-doc-ref"),
-            pytest.param("notes.user:*", "fast=True", id="exists-host-advice"),
-        ],
-    )
-    def test_unsupported_messages_carry_no_internal_vocabulary(
+    def test_exists_requires_fast_gets_the_user_facing_rewrite(
         self,
         query_index: tantivy.Index,
-        query: str,
-        leaked_fragment: str,
     ) -> None:
+        # The only emit-time diagnostic kind paperless rewrites itself
+        # (_user_facing_emit_message): whoosh-compat's own message advises
+        # a host-side fast=True config change, which the user can't act
+        # on, so this checks OUR rewrite, not whoosh-compat's wording
+        # (that's whoosh-compat's own tests/emitter/test_kind_matrix.py's
+        # job now).
         with pytest.raises(SearchQueryError) as exc_info:
-            parse_user_query(query_index, query, UTC)
-        assert leaked_fragment not in str(exc_info.value)
-        # The message must still say something useful, not be blanked.
-        assert str(exc_info.value).strip()
+            parse_user_query(query_index, "notes.user:*", UTC)
+        assert str(exc_info.value) == (
+            "existence searches (field:*) are not supported for this field"
+        )
