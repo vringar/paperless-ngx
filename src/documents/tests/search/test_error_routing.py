@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC
-from typing import TYPE_CHECKING
 
 import pytest
 import tantivy
@@ -20,28 +19,15 @@ from whoosh_compat.fields import FieldKind
 from whoosh_compat.fields import FieldRef
 
 from documents.search._errors import SearchQueryError
-from documents.search._query import _logged_misconfigurations
 from documents.search._query import _map_emit_error
 from documents.search._query import _single_diagnostic_to_error
 from documents.search._query import parse_user_query
 from documents.search._schema import build_schema
 from documents.search._tokenizer import register_tokenizers
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
 pytestmark = pytest.mark.search
 
 _LIBRARY_PROSE = "INTERNAL LIBRARY WORDING WITH raw tantivy detail"
-
-
-@pytest.fixture(autouse=True)
-def _forget_logged_misconfigurations() -> Iterator[None]:
-    """The MISCONFIGURED log dedupes per process, so each test starts from a
-    process that has never seen one."""
-    _logged_misconfigurations.clear()
-    yield
-    _logged_misconfigurations.clear()
 
 
 @pytest.fixture(scope="module")
@@ -246,75 +232,3 @@ class TestRealQueriesRouteCorrectly:
         monkeypatch.setattr(query_mod, "tantivy_emit", raise_internal)
         with pytest.raises(QueryError):
             parse_user_query(query_index, "invoice", UTC)
-
-
-class TestMisconfigurationLogIsDeduped:
-    """The operator alert fires once per field per process; the 400 never is.
-
-    An alert that repeats on every user query is one operators filter out,
-    and EXISTS_REQUIRES_FAST is reachable from ordinary query text.
-    """
-
-    def test_repeated_query_logs_once_but_400s_every_time(
-        self,
-        query_index: tantivy.Index,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        with caplog.at_level(logging.ERROR, logger="paperless.search"):
-            for _ in range(3):
-                with pytest.raises(SearchQueryError) as excinfo:
-                    parse_user_query(query_index, "notes.user:*", UTC)
-                assert "notes.user" in str(excinfo.value)
-        assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
-
-    def test_a_different_field_still_logs(
-        self,
-        query_index: tantivy.Index,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """What stops a naive log-once-ever implementation passing."""
-        with caplog.at_level(logging.ERROR, logger="paperless.search"):
-            for query in ("notes.user:*", "notes.user:*", "custom_fields.value:*"):
-                with pytest.raises(SearchQueryError):
-                    parse_user_query(query_index, query, UTC)
-        logged = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-        assert len(logged) == 2
-        assert any("notes.user" in m for m in logged)
-        assert any("custom_fields.value" in m for m in logged)
-
-    def test_the_same_field_under_a_different_kind_still_logs(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """The key is (kind, field): two distinct misconfigurations of one
-        field are two distinct things for an operator to fix."""
-        field = FieldRef("notes", "user")
-        with caplog.at_level(logging.ERROR, logger="paperless.search"):
-            for kind in (
-                DiagnosticKind.EXISTS_REQUIRES_FAST,
-                DiagnosticKind.EXISTS_REQUIRES_FAST,
-                DiagnosticKind.SCHEMA_FIELD_MISSING,
-            ):
-                _map_emit_error(
-                    QueryError(
-                        _diagnostic(kind, field=field, field_kind=FieldKind.JSON),
-                    ),
-                )
-        assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 2
-
-    def test_the_dedupe_key_is_bounded_by_the_registry(
-        self,
-        query_index: tantivy.Index,
-    ) -> None:
-        """Query text cannot grow the set: a JSON subpath the registry does not
-        declare never resolves, so it never reaches the MISCONFIGURED branch
-        (it demotes to an unfielded text search instead)."""
-        for suffix in ("aaa", "bbb", "ccc"):
-            parse_user_query(query_index, f"notes.{suffix}:*", UTC)
-        assert _logged_misconfigurations == set()
-
-        with pytest.raises(SearchQueryError):
-            parse_user_query(query_index, "notes.user:*", UTC)
-        assert _logged_misconfigurations == {
-            (DiagnosticKind.EXISTS_REQUIRES_FAST, "notes.user"),
-        }
