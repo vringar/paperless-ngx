@@ -186,12 +186,15 @@ def _build_ast_cjk_query(
     return _any_of(clauses) if clauses else None
 
 
-# A joined fuzzy word string must stay plain words: any token that could
-# read as tantivy query grammar (a colon, bracket, quote, operator...) is
-# dropped rather than escaped. Today's default-field analyzers only emit
-# word characters, so this never fires; it guards a future field whose
-# analyzer passes punctuation through (an identity/keyword analyzer).
-_WORD_TOKEN_RE = regex.compile(r"\w+")
+# A joined fuzzy word string must stay plain words: it goes back through
+# tantivy's own query parser, and the raw query text the clause collects
+# routinely carries characters that parser reads as grammar (a colon, a
+# bracket, a quote, a leading -). Each token is cut into its word runs and
+# only those are kept, so nothing injectable can reach the parser. Cutting
+# rather than dropping the whole token is what keeps ordinary hyphenated,
+# dotted and quoted input ("COVID-19", "hello@example.com", "tax reports")
+# contributing to the clause at all.
+_WORD_RUN_RE = regex.compile(r"\w+")
 
 
 def _try_parse_fuzzy_query(
@@ -222,13 +225,29 @@ def _try_parse_fuzzy_query(
     threshold already disciplines, accepted in exchange for never feeding
     field syntax to tantivy's parser.
 
+    The words are the query's RAW text, not the analyzer's output
+    (``analyzed=False``), because ``index.parse_query`` analyzes whatever
+    it is given and analysis is not idempotent: ``universities`` stems to
+    ``univers``, and handing that back stems it again to ``univ``, a term
+    the index does not contain. ``prefix=True`` hid this as over-broad
+    matching (``univ`` also prefixes ``unicycle``) rather than as no
+    matches at all. Raw text is untokenized, which is why it is cut into
+    word runs above rather than taken whole.
+
     The ValueError guard stays as insurance (the word string is plain
     tokens, so tantivy accepting it is expected, not assumed): on a parse
     failure the fuzzy clause is skipped and the exact/CJK clauses stand,
     rather than the whole query failing.
     """
-    tokens = wc.free_text_tokens(ast, registry=registry, fields=_DEFAULT_SEARCH_FIELDS)
-    words = [t for t in tokens if _WORD_TOKEN_RE.fullmatch(t)]
+    tokens = wc.free_text_tokens(
+        ast,
+        registry=registry,
+        fields=_DEFAULT_SEARCH_FIELDS,
+        analyzed=False,
+    )
+    words = list(
+        dict.fromkeys(word for token in tokens for word in _WORD_RUN_RE.findall(token)),
+    )
     if not words:
         return None
     fuzzy_text = " ".join(words)
