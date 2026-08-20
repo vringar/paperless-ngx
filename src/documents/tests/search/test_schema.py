@@ -12,6 +12,7 @@ from documents.search._fields import PUBLIC_FIELDS
 from documents.search._schema import SCHEMA_VERSION
 from documents.search._schema import build_schema
 from documents.search._schema import needs_rebuild
+from documents.search._schema import schema_fingerprint
 from documents.search._tokenizer import register_tokenizers
 
 if TYPE_CHECKING:
@@ -35,7 +36,13 @@ class TestNeedsRebuild:
     ) -> None:
         settings.SEARCH_LANGUAGE = "en"
         (index_dir / ".index_settings.json").write_text(
-            json.dumps({"schema_version": SCHEMA_VERSION, "language": "en"}),
+            json.dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "language": "en",
+                    "schema_fingerprint": schema_fingerprint(),
+                },
+            ),
         )
         assert needs_rebuild(index_dir) is False
 
