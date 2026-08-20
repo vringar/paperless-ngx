@@ -269,6 +269,11 @@ class TestDocumentedDateForms:
             # of the resulting range, not the way the value is delimited.
             'added:"now"',
             'added:"midnight"',
+            # A relative offset, which the warning in the docs names by this
+            # exact spelling. Standing alone it is an instant like the rest of
+            # this list; the same offset used as a range bound is a real
+            # window, pinned by the test below.
+            'added:"-1 week"',
         ],
     )
     def test_forms_the_docs_warn_about_match_nothing(
@@ -297,6 +302,24 @@ class TestDocumentedDateForms:
             _matched_ids(backend, "added:2005-03-04T15:30:00Z")
         assert exc_info.value.field == "added"
         assert exc_info.value.value == "2005-03-"
+
+    def test_relative_offset_as_a_range_bound_is_a_real_window(
+        self,
+        backend: TantivyBackend,
+        dated: dict[str, int],
+    ) -> None:
+        """The same offset that matches nothing on its own spans the last
+        seven days as a lower bound. The docs say so, next to the warning
+        about the standalone form, so both readings are pinned together.
+
+        "last_monday" is indexed at 2026-06-08T10:00, two hours before the
+        window opens, so its exclusion is what shows the bound is the offset
+        and not a whole-day rounding of it.
+        """
+        assert _matched_ids(backend, "added:['-1 week' to now]") == {
+            dated["today"],
+            dated["yesterday"],
+        }
 
     def test_double_quoted_range_bound_is_rejected(
         self,

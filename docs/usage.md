@@ -999,7 +999,7 @@ added:[2005-06-15T09:00:00Z to 2005-06-15T17:00:00Z]
 
 !!! warning
 
-    `now`, `noon`, `midnight` and relative offsets such as `"-3 days"` or `"-1 week"` are accepted by the parser but resolve to a single instant rather than to a span of time, so they match only a document whose timestamp is exactly that instant, which in practice means no documents at all. Quoting does not change this. Spellings like `now-3days` and `"3 days ago"` are rejected outright.
+    As a value on its own, `now`, `noon`, `midnight` and relative offsets such as `"-3 days"` or `"-1 week"` are accepted by the parser but resolve to a single instant rather than to a span of time, so they match only a document whose timestamp is exactly that instant, which in practice means no documents at all. Quoting does not change this. As a *range bound* they are the opposite of a trap and are what you want: `added:['-1 week' to now]` covers the whole of the last seven days. Spellings like `now-3days` and `"3 days ago"` are rejected outright wherever they appear.
 
 #### Searching custom fields
 
