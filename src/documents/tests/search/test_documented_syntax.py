@@ -182,6 +182,11 @@ class TestArchiveMetadataFields:
             "original_filename:invoice.pdf",
             f"checksum:{DOC_CHECKSUM}",
             "checksum:9f86d081*",
+            # A checksum term is stored verbatim, but a checksum *pattern* is
+            # lowercased before it is matched, which the docs now say outright
+            # next to the "only a complete, lowercase checksum matches" rule
+            # that the uppercase term in the negative list below pins.
+            "checksum:9F86D081*",
         ],
     )
     def test_documented_metadata_query_matches(

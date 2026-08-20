@@ -933,7 +933,7 @@ original_filename:invoice.pdf
 - `asn` matches a document's Archive Serial Number.
 - `page_count` matches a document's page count.
 - `num_notes` matches how many notes a document has.
-- `checksum` matches the checksum of the original document file (not the archived/processed version). Unlike the text fields, this one is stored verbatim rather than tokenized, so only a complete, lowercase checksum matches. To search by the first few characters instead, use a wildcard: `checksum:9f86d081*`. Wildcard patterns on the text fields are also tried stemmed, to line up with the stemmed index, but `checksum` is indexed without stemming, so its patterns are matched exactly as typed and nothing else.
+- `checksum` matches the checksum of the original document file (not the archived/processed version). Unlike the text fields, this one is stored verbatim rather than tokenized, so only a complete, lowercase checksum matches. To search by the first few characters instead, use a wildcard: `checksum:9f86d081*`. Wildcard patterns on the text fields are also tried stemmed, to line up with the stemmed index, but `checksum` is indexed without stemming, so its patterns are not stemmed either: a wildcard prefix is matched literally, apart from being lowercased first. `checksum:9F86D081*` therefore does find the document, even though the plain uppercase term does not.
 - `original_filename` matches the filename of the document as originally consumed.
 
 `asn`, `page_count` and `num_notes` are numeric and also accept ranges, for example `asn:[50 to 150]`.
@@ -952,10 +952,15 @@ pattern is tried both as you typed it and in its stemmed form, so a trailing
 and "invoiced") as well as longer words whose stored term still begins with
 what you typed (`copy*` finds "copyright" alongside "copy" and "copies").
 
-It is still not a plain prefix search over the original text: where stemming
-shortens a word, a pattern that reaches past the point it was cut off matches
-nothing. `productname` is stored as `productnam`, so `produ*name` finds
-nothing, and "happiness" is stored as `happi`, so `happine*` does not find it.
+It is still not a plain prefix search over the original text. A trailing `*`
+matches a stored term when either the run you typed or its stemmed form is a
+prefix of that term, so a fragment that stops part-way between the two matches
+neither: `universities*` finds "university" and "universities", which are both
+stored as `univers`, while the shorter `universit*` finds nothing at all. For
+the same reason `happine*` does not find "happiness", which is stored as
+`happi`. And a pattern that requires letters after the wildcard which stemming
+has removed cannot match either: `productname` is stored as `productnam`, so
+`produ*name` finds nothing.
 
 Matching natural date keywords:
 
@@ -963,7 +968,9 @@ The multi-word date keywords listed below work quoted or unquoted after a
 date field (`added:"previous month"` and `added:previous month` are
 equivalent); elsewhere in a query the same words are treated as ordinary
 search text. Other date expressions the parser accepts (relative offsets
-like `-1 week`, or specific dates like `12 december 2019`) must be quoted.
+like `-1 week`, or specific dates like `12 december 2019`) must be quoted when
+they stand alone as a value; inside a range's brackets they work unquoted, as
+in `added:[-1 week to now]`.
 
 ```
 added:today

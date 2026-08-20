@@ -78,17 +78,41 @@ class TestPrefixStemming:
         assert _matched_ids(backend, query) == {indexed_doc.id}
 
     @pytest.mark.parametrize("query", ["univers*", "librar*"])
-    def test_partial_prefix_is_not_lengthened_by_its_stem(
+    def test_partial_prefix_reaches_the_stemmed_term(
         self,
         backend: TantivyBackend,
         indexed_doc: Document,
         query: str,
     ) -> None:
-        """A partial prefix keeps matching. "librar" stems to "librari", which
-        is longer than what was typed and so matches no term on its own, but
-        the run is offered as typed alongside its stem and that form reaches
-        "librari" in the index."""
+        """A prefix shorter than a whole word still matches, and neither of
+        these needs the two-alternative path to do it.
+
+        Measured under "en": the stemmer leaves "librar" alone, so it has one
+        form, and that form is a prefix of the "librari" the index holds for
+        "library". "univers" stems to the *shorter* "univ", and the run as
+        typed and its stem are both prefixes of the "univers" the index holds
+        for "university". The case where the two forms genuinely diverge, and
+        only one of them matches, is
+        test_stem_substitution_reaches_both_the_inflection_and_the_compound.
+        """
         assert _matched_ids(backend, query) == {indexed_doc.id}
+
+    def test_full_word_reaches_the_stem_but_a_fragment_of_it_does_not(
+        self,
+        backend: TantivyBackend,
+        indexed_doc: Document,
+    ) -> None:
+        """The alternatives widen recall without turning a wildcard into a
+        prefix search over the original text.
+
+        "university" is stored as "univers". The stem of "universities" is
+        that same "univers", so the longer word matches; "universit" is a
+        prefix of neither its own stem nor the stored term, so the *shorter*
+        fragment matches nothing. usage.md names this pair, so a reader told
+        that `universit*` fails is also told which spelling works.
+        """
+        assert _matched_ids(backend, "universities*") == {indexed_doc.id}
+        assert _matched_ids(backend, "universit*") == set()
 
     def test_pattern_past_the_stem_boundary_is_documented_not_fixed(
         self,
