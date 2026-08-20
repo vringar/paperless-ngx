@@ -67,11 +67,23 @@ def _map_emit_error(e: QueryError) -> SearchQueryError:
     schema disagree, which only an operator can fix, so it is logged as an
     error, but a request is still waiting and the query cannot run either
     way, so it also returns a 400.
+
+    EXISTS_REQUIRES_FAST is the one MISCONFIGURED kind that is not a
+    disagreement. whoosh-compat derives it from the registry's own FieldSpec
+    (kind plus fast) without ever consulting the index schema, so it fires
+    whenever a non-fast field of a kind that cannot answer "exists" is asked
+    to: for us that is only the JSON fields, which field_descriptors() builds
+    non-fast on purpose. "notes:*" and the five other spellings of it are
+    ordinary user error that no operator action can clear, so they get the
+    400 without the alert.
     """
     d = e.diagnostic
     if d.cause is Cause.INTERNAL:
         raise e
-    if d.cause is Cause.MISCONFIGURED:
+    if (
+        d.cause is Cause.MISCONFIGURED
+        and d.kind is not DiagnosticKind.EXISTS_REQUIRES_FAST
+    ):
         logger.error(
             "Search index misconfiguration for field %s (%s): %s",
             d.field,

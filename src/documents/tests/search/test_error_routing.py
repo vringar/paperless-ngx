@@ -74,18 +74,11 @@ class TestEmitErrorRouting:
             _map_emit_error(error)
         assert excinfo.value is error
 
-    @pytest.mark.parametrize(
-        "kind",
-        [
-            DiagnosticKind.SCHEMA_FIELD_MISSING,
-            DiagnosticKind.EXISTS_REQUIRES_FAST,
-        ],
-    )
     def test_misconfigured_cause_is_logged_and_becomes_a_400(
         self,
-        kind: DiagnosticKind,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        kind = DiagnosticKind.SCHEMA_FIELD_MISSING
         with caplog.at_level(logging.ERROR, logger="paperless.search"):
             error = _map_emit_error(
                 QueryError(_diagnostic(kind, field=FieldRef("asn"))),
@@ -101,6 +94,7 @@ class TestEmitErrorRouting:
         [
             DiagnosticKind.TEXT_RANGE,
             DiagnosticKind.PATTERN_TOO_COMPLEX,
+            DiagnosticKind.EXISTS_REQUIRES_FAST,
         ],
     )
     def test_unsupported_cause_is_a_400_with_no_operator_log(
@@ -109,7 +103,11 @@ class TestEmitErrorRouting:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A query tantivy cannot run is the user's to fix; it must not page
-        an operator the way a registry/schema mismatch does."""
+        an operator the way a registry/schema mismatch does.
+
+        EXISTS_REQUIRES_FAST is nominally MISCONFIGURED but belongs here: it
+        is decided from the registry's own FieldSpec, so it never reports a
+        disagreement anyone could resolve."""
         with caplog.at_level(logging.WARNING, logger="paperless.search"):
             error = _map_emit_error(QueryError(_diagnostic(kind)))
         assert isinstance(error, SearchQueryError)
@@ -197,17 +195,6 @@ class TestRealQueriesRouteCorrectly:
         with pytest.raises(SearchQueryError) as excinfo:
             parse_user_query(query_index, "title:[a to b]", UTC)
         assert "title" in str(excinfo.value)
-
-    def test_exists_on_a_non_fast_json_subpath_logs_and_400s(
-        self,
-        query_index: tantivy.Index,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        with caplog.at_level(logging.ERROR, logger="paperless.search"):
-            with pytest.raises(SearchQueryError) as excinfo:
-                parse_user_query(query_index, "notes.user:*", UTC)
-        assert "notes.user" in str(excinfo.value)
-        assert any(r.levelno == logging.ERROR for r in caplog.records)
 
     def test_wildcard_on_a_numeric_field_is_a_400_naming_the_field(
         self,
