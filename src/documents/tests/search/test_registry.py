@@ -3,6 +3,7 @@ from whoosh_compat import FieldKind
 from whoosh_compat import FieldRegistry
 from whoosh_compat.fields import ResolvedField
 
+from documents.search._fields import PUBLIC_FIELDS
 from documents.search._registry import get_field_registry
 
 
@@ -34,6 +35,16 @@ class TestFieldRegistry:
             "viewer_group_id",
         ):
             assert name not in registry
+
+    def test_no_queryable_field_name_ends_in_id(self) -> None:
+        # The list above names the seven that were dropped; this catches the
+        # eighth. Internal *_id columns are written for permission filtering
+        # and joins, and whoosh only exposed them as query fields by accident,
+        # so a new one reaching the query surface is a leak rather than a
+        # feature. Checked against PUBLIC_FIELDS rather than the registry so
+        # an internal field is caught where it is declared.
+        leaked = [f.name for f in PUBLIC_FIELDS if f.name.endswith("_id")]
+        assert not leaked, f"internal id fields reached the query surface: {leaked}"
 
     def test_type_alias_resolves_to_document_type(
         self,
