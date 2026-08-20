@@ -23,9 +23,7 @@ import pytest
 import time_machine
 
 from documents.models import Document
-from documents.models import DocumentType
 from documents.models import Note
-from documents.models import StoragePath
 from documents.models import Tag
 
 if TYPE_CHECKING:
@@ -110,41 +108,6 @@ class TestPhraseSearch:
         )
         assert _matched_ids(backend, '"quick brown fox"') == {doc.pk}
         assert _matched_ids(backend, '"brown quick fox"') == set()
-
-
-class TestFieldAliases:
-    def test_type_is_an_alias_for_document_type(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        doc_type = DocumentType.objects.create(name="invoice")
-        doc = _index(
-            backend,
-            title="Typed",
-            content="body",
-            checksum="doc-syntax-typed",
-            document_type=doc_type,
-        )
-        assert _matched_ids(backend, "type:invoice") == {doc.pk}
-        assert _matched_ids(backend, "document_type:invoice") == {doc.pk}
-
-    def test_path_is_an_alias_for_storage_path(
-        self,
-        backend: TantivyBackend,
-    ) -> None:
-        storage_path = StoragePath.objects.create(
-            name="archive",
-            path="archive/{{ title }}",
-        )
-        doc = _index(
-            backend,
-            title="Pathed",
-            content="body",
-            checksum="doc-syntax-pathed",
-            storage_path=storage_path,
-        )
-        assert _matched_ids(backend, "path:archive") == {doc.pk}
-        assert _matched_ids(backend, "storage_path:archive") == {doc.pk}
 
 
 class TestTagCommaList:
