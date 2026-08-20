@@ -16,6 +16,7 @@ from time import mktime
 from time import sleep
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Final
 from typing import Literal
 from typing import NamedTuple
 from unicodedata import normalize
@@ -279,17 +280,40 @@ logger = logging.getLogger("paperless.api")
 _TANTIVY_INTERSECT_THRESHOLD = 5_000
 _TANTIVY_SEARCH_PARAM_NAMES = ("text", "title_search", "query", "more_like_id")
 
+# whoosh-compat's fieldname tagger (used only for SearchMode.QUERY, via the
+# whoosh grammar in parse_user_query) is O(n^2) in plain word characters:
+# measured at ~0.96s/10k chars, ~3.67s/20k, ~14.4s/40k against the real field
+# registry. Django's DATA_UPLOAD_MAX_MEMORY_SIZE default (2.5 MB) does not
+# bound this on the POST-body selection-filter path, so an unbounded query
+# is a single-request CPU exhaustion vector. 4096 chars caps the worst case
+# at roughly 0.16s (quadratic extrapolation from the measurements above),
+# far beyond any plausible hand-typed advanced query, while still being fast
+# enough to absorb inside a request handler. Applied to all three modes at
+# this shared choke point: TEXT and TITLE route through simple_search_tokens
+# instead and measure linear even at 20k chars, so the cap is hygiene for
+# them, not a fix, but a single limit here is simpler than one exemption.
+# Not exposed as a PAPERLESS_* setting: this is a hard security boundary,
+# not a tunable, and a raisable ceiling would let a misconfiguration
+# reintroduce the exact hazard this exists to close.
+_MAX_QUERY_LENGTH: Final[int] = 4096
+
 
 def _get_tantivy_query_and_mode(params):
+    from documents.search import QueryTooLongError
     from documents.search import SearchMode
 
     if "text" in params:
-        return str(params["text"]), SearchMode.TEXT
-    if "title_search" in params:
-        return str(params["title_search"]), SearchMode.TITLE
-    if "query" in params:
-        return str(params["query"]), SearchMode.QUERY
-    return None  # pragma: no cover
+        raw, mode = str(params["text"]), SearchMode.TEXT
+    elif "title_search" in params:
+        raw, mode = str(params["title_search"]), SearchMode.TITLE
+    elif "query" in params:
+        raw, mode = str(params["query"]), SearchMode.QUERY
+    else:
+        return None  # pragma: no cover
+
+    if len(raw) > _MAX_QUERY_LENGTH:
+        raise QueryTooLongError(len(raw), _MAX_QUERY_LENGTH)
+    return raw, mode
 
 
 def _get_more_like_id(query_params: dict[str, Any], user: User | None) -> int:

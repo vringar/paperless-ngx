@@ -9,6 +9,7 @@ from documents.search._backend import reset_backend
 from documents.search._errors import InvalidDateQuery
 from documents.search._errors import InvalidNumberQuery
 from documents.search._errors import MultipleSearchQueryErrors
+from documents.search._errors import QueryTooLongError
 from documents.search._errors import SearchQueryError
 from documents.search._errors import search_query_error_messages
 from documents.search._schema import needs_rebuild
@@ -18,6 +19,7 @@ __all__ = [
     "InvalidDateQuery",
     "InvalidNumberQuery",
     "MultipleSearchQueryErrors",
+    "QueryTooLongError",
     "SearchHit",
     "SearchIndexLockError",
     "SearchMode",

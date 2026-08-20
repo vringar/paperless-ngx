@@ -34,6 +34,23 @@ class InvalidNumberQuery(SearchQueryError):
         super().__init__(f"Invalid numeric value {value!r} for field {field!r}.")
 
 
+class QueryTooLongError(SearchQueryError):
+    """Raised when a query string exceeds the maximum allowed length.
+
+    whoosh-compat's fieldname tagger is O(n^2) in plain word characters, so an
+    unbounded query is a CPU-exhaustion vector against a single request
+    handler. This is a hard boundary, not a validation nicety.
+    """
+
+    def __init__(self, length: int, limit: int) -> None:
+        self.length = length
+        self.limit = limit
+        super().__init__(
+            f"The search query is too long ({length} characters). "
+            f"The maximum allowed length is {limit} characters.",
+        )
+
+
 class MultipleSearchQueryErrors(SearchQueryError):
     """Aggregates every user-fixable error from one parse, not just the first."""
 
