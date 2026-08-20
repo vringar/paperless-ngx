@@ -86,32 +86,6 @@ def _quote_date_keyword_phrases(raw_query: str) -> str:
     )
 
 
-# notes:/custom_fields: were valid fielded searches before this migration.
-# whoosh-compat's registry only exposes them as JSON subpaths, so a bare
-# prefix would demote to an unfielded text search. Rewrite live to the
-# equivalent subpath (notes: -> notes.note:, custom_fields: ->
-# custom_fields.value:); custom_fields.name: remains available separately.
-# Not preceded by a word character or dot, so subpath spellings and words
-# merely ending in the prefix are untouched.
-_BARE_JSON_PREFIX_RES: Final = (
-    (regex.compile(r"(?<![.\w])notes:(?!\.)"), "notes.note:"),
-    (regex.compile(r"(?<![.\w])custom_fields:(?!\.)"), "custom_fields.value:"),
-)
-
-
-def _rewrite_bare_json_field_prefixes(raw_query: str) -> str:
-    """Rewrite bare ``notes:``/``custom_fields:`` prefixes to their
-    subpath equivalents. Prefix substitution only, values untouched.
-
-    Not quote-aware, same accepted trade-off as
-    _quote_date_keyword_phrases: a literal ``notes:`` inside an existing
-    quoted phrase on an unrelated field would also get rewritten.
-    """
-    for pattern, replacement in _BARE_JSON_PREFIX_RES:
-        raw_query = pattern.sub(replacement, raw_query, timeout=_REGEX_TIMEOUT)
-    return raw_query
-
-
 def _user_facing_emit_message(d: Diagnostic) -> str:
     """A user-safe message for an emit-time QueryError's Diagnostic.
 
@@ -340,12 +314,13 @@ def parse_user_query(
     """
     Parse user query through whoosh-compat, then blend in fuzzy/CJK clauses.
 
-    1. Two small pre-parse rewrites keep historically honored spellings
+    1. A small pre-parse rewrite keeps a historically honored spelling
        working: unquoted multi-word date keyword phrases on date fields
-       are quoted (_quote_date_keyword_phrases), and bare
-       notes:/custom_fields: prefixes become their subpath equivalents
-       (_rewrite_bare_json_field_prefixes). Then wc.parse() against the
-       shared FieldRegistry (whoosh grammar -> AST).
+       are quoted (_quote_date_keyword_phrases). Then wc.parse() against
+       the shared FieldRegistry (whoosh grammar -> AST). Bare
+       notes:/custom_fields: prefixes resolve to their default subpath
+       (notes.note:/custom_fields.value:) directly in the registry, via
+       each JSON field's SubpathSpec(default=True).
     2. Any diagnostics (bad dates/numbers) map to SearchQueryError subclasses
        and raise — the view returns HTTP 400 with every offending field
        listed, not just the first.
@@ -366,7 +341,6 @@ def parse_user_query(
     """
     registry = get_field_registry(settings.SEARCH_LANGUAGE)
     raw_query = _quote_date_keyword_phrases(raw_query)
-    raw_query = _rewrite_bare_json_field_prefixes(raw_query)
     result = wc.parse(
         raw_query,
         registry=registry,

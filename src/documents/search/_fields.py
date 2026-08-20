@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from whoosh_compat import FieldKind
 from whoosh_compat import FieldSpec
+from whoosh_compat import SubpathSpec
 
 # Internal-only schema fields with no query-syntax meaning of their own
 # (sort shadow fields, bigram CJK fields, simple_title/simple_content,
@@ -28,6 +29,14 @@ PUBLIC_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("created", FieldKind.DATE, date_only=True, fast=True),
     FieldSpec("modified", FieldKind.DATETIME, fast=True),
     FieldSpec("added", FieldKind.DATETIME, fast=True),
-    FieldSpec("notes", FieldKind.JSON, subpaths=("user", "note")),
-    FieldSpec("custom_fields", FieldKind.JSON, subpaths=("name", "value")),
+    FieldSpec(
+        "notes",
+        FieldKind.JSON,
+        subpaths={"user": SubpathSpec(), "note": SubpathSpec(default=True)},
+    ),
+    FieldSpec(
+        "custom_fields",
+        FieldKind.JSON,
+        subpaths={"name": SubpathSpec(), "value": SubpathSpec(default=True)},
+    ),
 )
