@@ -169,10 +169,8 @@ psycopg-c = [
 torch = [
   { index = "pytorch-cpu" },
 ]
-# TODO: switch to a pinned PyPI version once whoosh-compat releases
-# (expected around this repo's PR 3 in the transition plan); fall back to a
-# pinned git commit SHA if that release slips. See
-# docs/superpowers/specs/2026-08-07-whoosh-compat-transition-design.md.
+# TODO: switch to a pinned PyPI version once whoosh-compat releases; fall back
+# to a pinned git commit SHA if that release slips.
 whoosh-compat = { path = "../whoosh-compat" }
 
 [tool.ruff]

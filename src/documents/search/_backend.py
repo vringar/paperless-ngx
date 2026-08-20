@@ -528,7 +528,9 @@ class TantivyBackend:
 
         # Notes — JSON for structured queries (notes.user:alice, notes.note:text).
         # notes_text is a plain-text companion for snippet/highlight generation;
-        # tantivy's SnippetGenerator does not support JSON fields.
+        # tantivy's SnippetGenerator does not support JSON fields. It is not in
+        # _DEFAULT_SEARCH_FIELDS, so an unqualified query never searches it: a
+        # note matches through the JSON field or not at all.
         num_notes = 0
         note_texts: list[str] = []
         for note in document.notes.all():
@@ -544,8 +546,9 @@ class TantivyBackend:
         if note_texts:
             doc.add_text("notes_text", " ".join(note_texts))
 
-        # Custom fields — JSON for structured queries (custom_fields.name:x, custom_fields.value:y),
-        # companion text field for default full-text search.
+        # Custom fields — JSON for structured queries (custom_fields.name:x,
+        # custom_fields.value:y). There is no companion text field here, unlike
+        # notes: custom field values are reachable only through the JSON field.
         for cfi in document.custom_fields.all():
             search_value = cfi.value_for_search
             # Skip fields where there is no value yet
