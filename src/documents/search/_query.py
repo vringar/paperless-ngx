@@ -89,32 +89,22 @@ def _has_cjk(text: str) -> bool:
 def extract_cjk_text(text: str) -> str:
     """Join the CJK runs in ``text`` for indexing into bigram (char-ngram) fields.
 
-    Mirrors the query side (``_build_cjk_query``): only CJK runs are ever searched
-    against the bigram fields, so only CJK runs are worth indexing there. Latin
-    text fed to a character-bigram field is never matched and only bloats the
+    Mirrors the query side, which extracts the CJK runs of whatever it is
+    about to search for (the raw string in simple modes, the parsed query's
+    free-text tokens in query mode): only CJK runs are ever searched against
+    the bigram fields, so only CJK runs are worth indexing there. Latin text
+    fed to a character-bigram field is never matched and only bloats the
     index and slows indexing/merge. Returns "" when there is no CJK text.
     """
     return " ".join(_CJK_RE.findall(text))
 
 
-def _build_cjk_query(
+def _parse_cjk_text(
     index: tantivy.Index,
-    raw_query: str,
+    cjk_text: str,
     fields: list[str],
 ) -> tantivy.Query | None:
-    """Build a bigram-field query from the CJK runs in ``raw_query``.
-
-    Only the CJK character runs are extracted and parsed; ASCII field prefixes,
-    boolean operators and date keywords are discarded. This keeps the CJK clause
-    plain-text and consistent across query/simple modes (no leaked ``field:``
-    semantics, no parse failures from spaced ``-``/``+``), and avoids feeding
-    Latin tokens into the character-bigram matcher (which would produce spurious
-    matches against unrelated Latin text). Returns None when there is no CJK
-    text or the parse fails.
-    """
-    cjk_text = extract_cjk_text(raw_query)
-    if not cjk_text:
-        return None
+    """Parse a plain CJK run string against ``fields``, or None if it won't parse."""
     try:
         return index.parse_query(cjk_text, fields)
     except Exception:
@@ -127,6 +117,73 @@ def _build_cjk_query(
             cjk_text,
         )
         return None
+
+
+def _build_cjk_query(
+    index: tantivy.Index,
+    raw_query: str,
+    fields: list[str],
+) -> tantivy.Query | None:
+    """Build a bigram-field query from the CJK runs in ``raw_query``.
+
+    For the simple (TEXT/TITLE) modes, whose input is plain text and carries
+    no query grammar to respect. Only the CJK character runs are extracted, so
+    a stray ``field:`` prefix or ``-``/``+`` in the input can neither leak
+    field semantics nor fail the parse, and no Latin token reaches the
+    character-bigram matcher (where it would produce spurious matches against
+    unrelated Latin text). Returns None when there is no CJK text or the parse
+    fails.
+    """
+    cjk_text = extract_cjk_text(raw_query)
+    if not cjk_text:
+        return None
+    return _parse_cjk_text(index, cjk_text, fields)
+
+
+def _build_ast_cjk_query(
+    index: tantivy.Index,
+    ast: wc.ast.Node,
+    registry: wc.FieldRegistry,
+) -> tantivy.Query | None:
+    """Build the bigram clause of a QUERY-mode search from the parsed AST.
+
+    Same discipline as the fuzzy clause (see _try_parse_fuzzy_query): the CJK
+    runs come from whoosh_compat's ``free_text_tokens`` over the parsed tree,
+    never from the raw query string, so a term the user negated or restricted
+    to a field outside the default search fields contributes nothing, instead
+    of resurfacing as a top-level clause matching every bigram field.
+
+    ``free_text_tokens`` reports no field of its own, so the tokens are
+    collected one default field at a time: a bare term, which the parser has
+    already copied onto every default field, is therefore searched across
+    every bigram field, while ``title:東京`` reaches ``bigram_title`` alone.
+    Fields whose CJK text is identical (the bare-term case) share a single
+    parse over all of their bigram fields at once.
+
+    Raw (``analyzed=False``) tokens are used because the bigram fields have
+    their own character-ngram analyzer: the default fields' word analyzers
+    have no useful say over a CJK run, and running them first would only
+    risk dropping it (remove_long) before the run is ever extracted.
+    Returns None when the query has no CJK free text.
+    """
+    fields_by_text: dict[str, list[str]] = {}
+    for field, bigram_field in _CJK_BIGRAM_FIELDS.items():
+        tokens = wc.free_text_tokens(
+            ast,
+            registry=registry,
+            fields=[field],
+            analyzed=False,
+        )
+        cjk_text = extract_cjk_text(" ".join(tokens))
+        if cjk_text:
+            fields_by_text.setdefault(cjk_text, []).append(bigram_field)
+
+    clauses: list[tuple[tantivy.Occur, tantivy.Query]] = [
+        (tantivy.Occur.Should, query)
+        for cjk_text, bigram_fields in fields_by_text.items()
+        if (query := _parse_cjk_text(index, cjk_text, bigram_fields)) is not None
+    ]
+    return _any_of(clauses) if clauses else None
 
 
 # A joined fuzzy word string must stay plain words: any token that could
@@ -200,13 +257,10 @@ _DEFAULT_SEARCH_FIELDS: Final[list[str]] = [
 ]
 _SIMPLE_SEARCH_FIELDS: Final[list[str]] = ["simple_title", "simple_content"]
 _TITLE_SEARCH_FIELDS: Final[list[str]] = ["simple_title"]
-_CJK_ALL_FIELDS: Final[list[str]] = [
-    "bigram_content",
-    "bigram_title",
-    "bigram_correspondent",
-    "bigram_document_type",
-    "bigram_tag",
-]
+# The bigram (character-ngram) companion of each default search field.
+_CJK_BIGRAM_FIELDS: Final[dict[str, str]] = {
+    field: f"bigram_{field}" for field in _DEFAULT_SEARCH_FIELDS
+}
 _CJK_CONTENT_FIELDS: Final[list[str]] = ["bigram_content"]
 _CJK_TITLE_FIELDS: Final[list[str]] = ["bigram_title"]
 _FIELD_BOOSTS = {"title": 2.0}
@@ -282,8 +336,9 @@ def parse_user_query(
        keywords, bracket-class wildcards, etc.) tantivy's parser rejects,
        which used to silently knock the fuzzy clause out of any mixed
        query (see _try_parse_fuzzy_query).
-    5. Optional CJK bigram clause — unchanged from before this migration,
-       never went through the pre-whoosh-compat translation layer either.
+    5. Optional CJK bigram clause, built from the same parsed AST for the
+       same reason (see _build_ast_cjk_query): a CJK term the query negated
+       or fielded must not resurface through it.
     """
     registry = get_field_registry(settings.SEARCH_LANGUAGE)
     result = wc.parse(
@@ -302,7 +357,7 @@ def parse_user_query(
         raise _map_emit_error(e) from e
 
     cjk_query = (
-        _build_cjk_query(index, raw_query, _CJK_ALL_FIELDS)
+        _build_ast_cjk_query(index, result.ast, registry)
         if _has_cjk(raw_query)
         else None
     )
