@@ -267,11 +267,10 @@ class TestFuzzyBlendSurvivesWhooshGrammar:
 
 
 class TestUnquotedDateKeywordPhrases:
-    """The unquoted spelling (added:previous month) has always been
-    honored via an app-level quoting assist, since whoosh-compat's parser
-    only accepts the quoted form natively. paperless quotes the closed
-    phrase vocabulary on date fields before parsing; every date
-    computation still happens in whoosh-compat."""
+    """The unquoted spelling (added:previous month) is honored natively by
+    whoosh-compat's own grammar for this closed phrase vocabulary — no
+    app-level rewrite is involved. Pins that the historically supported
+    spelling keeps working now that paperless no longer pre-quotes it."""
 
     @pytest.fixture
     def period_documents(self, backend: TantivyBackend) -> dict[str, int]:
@@ -335,7 +334,7 @@ class TestUnquotedDateKeywordPhrases:
         with time_machine.travel(FROZEN_NOW, tick=False):
             _matched_ids(backend, query)
 
-    def test_text_field_keyword_words_are_not_rewritten(
+    def test_text_field_keyword_words_are_ordinary_text(
         self,
         backend: TantivyBackend,
         period_documents: dict[str, int],

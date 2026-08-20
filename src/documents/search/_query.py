@@ -18,7 +18,6 @@ from documents.search._errors import InvalidDateQuery
 from documents.search._errors import InvalidNumberQuery
 from documents.search._errors import MultipleSearchQueryErrors
 from documents.search._errors import SearchQueryError
-from documents.search._fields import PUBLIC_FIELDS
 from documents.search._registry import get_field_registry
 from documents.search._tokenizer import simple_search_tokens
 
@@ -34,56 +33,6 @@ _REGEX_TIMEOUT: Final[float] = 1.0
 # Matches CJK/Hangul characters so queries can be routed to bigram fields.
 # Uses Unicode properties to cover all blocks including Extension B+ planes.
 _CJK_RE: Final = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]+")
-
-# Multi-word date-keyword phrases whoosh-compat only accepts quoted.
-# Unquoted has always been the honored spelling, so
-# _quote_date_keyword_phrases below inserts the quotes and nothing else.
-# Single-word keywords (today, yesterday) already parse unquoted.
-_DATE_KEYWORD_PHRASES: Final = (
-    "previous week",
-    "previous month",
-    "previous quarter",
-    "previous year",
-    "this month",
-    "this year",
-)
-
-# Field names are case-sensitive (matching the parser's own field
-# tagging); the keyword phrase is case-insensitive (matching the date
-# grammar's leniency for the quoted form). Date fields derived from
-# PUBLIC_FIELDS, never hand-listed.
-_DATE_KEYWORD_PHRASE_RE: Final = regex.compile(
-    r"\b("
-    + "|".join(
-        regex.escape(f.name)
-        for f in PUBLIC_FIELDS
-        if f.kind in (wc.FieldKind.DATE, wc.FieldKind.DATETIME)
-    )
-    + r"):((?i:"
-    + "|".join(_DATE_KEYWORD_PHRASES)
-    + r"))\b",
-)
-
-
-def _quote_date_keyword_phrases(raw_query: str) -> str:
-    """Quote unquoted multi-word date keyword phrases on date fields.
-
-    ``added:previous month`` becomes ``added:"previous month"``; already-
-    quoted spellings, TEXT fields, and standalone words are untouched.
-    Only quoting happens here - every date computation stays in
-    whoosh-compat's grammar.
-
-    Not quote-aware: matches anywhere in raw_query, including inside an
-    existing quoted phrase (e.g. ``title:"see added:previous month
-    notes"`` would get quotes inserted mid-phrase). Accepted as an
-    unlikely-in-practice edge case rather than implementing quote-aware
-    scanning.
-    """
-    return _DATE_KEYWORD_PHRASE_RE.sub(
-        r'\1:"\2"',
-        raw_query,
-        timeout=_REGEX_TIMEOUT,
-    )
 
 
 def _user_facing_emit_message(d: Diagnostic) -> str:
@@ -314,11 +263,8 @@ def parse_user_query(
     """
     Parse user query through whoosh-compat, then blend in fuzzy/CJK clauses.
 
-    1. A small pre-parse rewrite keeps a historically honored spelling
-       working: unquoted multi-word date keyword phrases on date fields
-       are quoted (_quote_date_keyword_phrases). Then wc.parse() against
-       the shared FieldRegistry (whoosh grammar -> AST). Bare
-       notes:/custom_fields: prefixes resolve to their default subpath
+    1. wc.parse() against the shared FieldRegistry (whoosh grammar -> AST).
+       Bare notes:/custom_fields: prefixes resolve to their default subpath
        (notes.note:/custom_fields.value:) directly in the registry, via
        each JSON field's SubpathSpec(default=True).
     2. Any diagnostics (bad dates/numbers) map to SearchQueryError subclasses
@@ -340,7 +286,6 @@ def parse_user_query(
        never went through the pre-whoosh-compat translation layer either.
     """
     registry = get_field_registry(settings.SEARCH_LANGUAGE)
-    raw_query = _quote_date_keyword_phrases(raw_query)
     result = wc.parse(
         raw_query,
         registry=registry,

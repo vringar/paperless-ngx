@@ -936,9 +936,11 @@ continues past where stemming cuts a word off cannot match at all:
 
 Matching natural date keywords:
 
-Multi-word date keywords work quoted or unquoted after a date field
-(`added:"previous month"` and `added:previous month` are equivalent);
-elsewhere in a query the same words are treated as ordinary search text.
+The multi-word date keywords listed below work quoted or unquoted after a
+date field (`added:"previous month"` and `added:previous month` are
+equivalent); elsewhere in a query the same words are treated as ordinary
+search text. Other date expressions the parser accepts (relative offsets
+like `-1 week`, or specific dates like `12 december 2019`) must be quoted.
 
 ```
 added:today
