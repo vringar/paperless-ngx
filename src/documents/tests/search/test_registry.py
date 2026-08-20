@@ -88,6 +88,13 @@ class TestFieldRegistry:
     def test_tag_is_comma_values(self, registry: FieldRegistry) -> None:
         assert _resolve(registry, "tag").spec.comma_values is True
 
+    def test_correspondent_is_not_comma_values(self, registry: FieldRegistry) -> None:
+        # "tag" is the only field that opts in. This is only observable here:
+        # end to end the two readings of "correspondent:foo,bar" agree,
+        # because the analyzer splits the literal value on the comma anyway,
+        # so a result-level test cannot tell a value list from literal text.
+        assert _resolve(registry, "correspondent").spec.comma_values is False
+
     def test_created_is_date_kind(self, registry: FieldRegistry) -> None:
         resolved = _resolve(registry, "created")
         assert resolved.spec.kind is FieldKind.DATE

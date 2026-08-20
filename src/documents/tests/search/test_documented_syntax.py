@@ -267,8 +267,9 @@ class TestDocumentedDateForms:
             # Quoting is what rescues the other multi-word date expressions,
             # so pin that it does not rescue these: the problem is the width
             # of the resulting range, not the way the value is delimited.
+            # One quoted spelling is enough for that; which keyword sits
+            # inside the quotes is grammar whoosh-compat owns.
             'added:"now"',
-            'added:"midnight"',
             # A relative offset, which the warning in the docs names by this
             # exact spelling. Standing alone it is an instant like the rest of
             # this list; the same offset used as a range bound is a real

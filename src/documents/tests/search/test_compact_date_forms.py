@@ -1,18 +1,15 @@
-"""Whoosh's compact, separator-free date spellings: ``20050304`` and
-``20050304153000``.
+"""Whoosh's compact, separator-free date spelling, resolved end to end.
 
-Both were asserted before the whoosh-compat migration (the old
-``test_8digit_created_date_field_always_uses_utc_midnight`` and
-``test_14digit_compact_datetime``) and by the deleted ``_translate.py``'s own
-suite. Afterwards the 8-digit form survived only incidentally, in one
-pre-existing API test, and the 14-digit form was asserted nowhere -- the
-regression class where a spelling silently stops matching with nothing to
-notice.
-
-The two forms differ in width, not just in length: 8 digits is a calendar-day
-window, 14 digits a single instant. The corpus separates them, so a form that
-degrades into the other one -- or into a non-match -- fails rather than passing
-on the one document that would match either way.
+whoosh-compat owns both widths of this spelling and asserts them directly
+(``test_compact_numeric_datetime`` for the 8-digit calendar-day form and
+``test_compact_numeric_datetime_full_width_is_a_single_second_instant`` for
+the 14-digit instant). The 14-digit form is kept here as the single
+representative because it is the one that exercises paperless's ``added``
+DATETIME fast field at full precision: the corpus separates a document at
+the named instant from one on the same calendar day at another hour and one
+on the next day at the same hour, so a query that degrades into a whole-day
+window, or drops the time of day, matches the wrong set rather than passing
+on a corpus that could not tell the difference.
 """
 
 from __future__ import annotations
@@ -68,40 +65,10 @@ def docs(backend: TantivyBackend) -> dict[str, int]:
     }
 
 
-class TestCompactDateForms:
-    def test_eight_digits_is_a_calendar_day_window(
-        self,
-        backend: TantivyBackend,
-        docs: dict[str, int],
-    ) -> None:
-        assert _matched_ids(backend, "added:20050304") == {
-            docs["instant"],
-            docs["same_day"],
-        }
-
-    def test_eight_digits_agrees_with_the_hyphenated_spelling(
-        self,
-        backend: TantivyBackend,
-        docs: dict[str, int],
-    ) -> None:
-        assert _matched_ids(backend, "added:20050304") == _matched_ids(
-            backend,
-            "added:2005-03-04",
-        )
-
-    def test_fourteen_digits_is_a_single_instant(
-        self,
-        backend: TantivyBackend,
-        docs: dict[str, int],
-    ) -> None:
-        # same_day is what tells this apart from the 8-digit form, next_day
-        # from a form that ignored the time altogether.
-        assert _matched_ids(backend, "added:20050304153000") == {docs["instant"]}
-
-    def test_fourteen_digits_addresses_the_hour_it_names(
-        self,
-        backend: TantivyBackend,
-        docs: dict[str, int],
-    ) -> None:
-        assert _matched_ids(backend, "added:20050304090000") == {docs["same_day"]}
-        assert _matched_ids(backend, "added:20050305153000") == {docs["next_day"]}
+def test_fourteen_digits_is_a_single_instant(
+    backend: TantivyBackend,
+    docs: dict[str, int],
+) -> None:
+    # same_day is what tells this apart from the 8-digit day-window form,
+    # next_day from a form that ignored the time altogether.
+    assert _matched_ids(backend, "added:20050304153000") == {docs["instant"]}
