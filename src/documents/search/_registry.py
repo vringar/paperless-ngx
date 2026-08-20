@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import TYPE_CHECKING
 
 from whoosh_compat import FieldKind
 from whoosh_compat import FieldRegistry
@@ -8,6 +9,10 @@ from whoosh_compat import FieldRegistry
 from documents.search._fields import PUBLIC_FIELDS
 from documents.search._tokenizer import ascii_fold
 from documents.search._tokenizer import paperless_text_analyzer
+from documents.search._tokenizer import stem_pattern_text
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _registry_cache: dict[str | None, FieldRegistry] = {}
 
@@ -17,15 +22,26 @@ def _identity_analyzer(text: str) -> list[str]:
     return [text]
 
 
-def _pattern_normalizer(text: str) -> str:
-    """Normalize wildcard/regex query patterns: lowercase -> ascii_fold.
+def _make_pattern_normalizer(language: str | None) -> Callable[[str], str]:
+    """Build the wildcard/regex literal-run normalizer for a search language."""
 
-    Mirrors the lowercase -> ascii_fold steps of the index-time analyzers
-    (paperless_text) without stemming, so pattern queries (e.g. "run*")
-    match tokens that were folded the same way at index time but are not
-    run through a stemmer, which would corrupt wildcard/regex semantics.
-    """
-    return ascii_fold(text.lower())
+    def _pattern_normalizer(text: str) -> str:
+        """Normalize a literal run so it can match indexed terms.
+
+        Index terms go through lowercase -> ascii_fold -> stem, so a pattern
+        that skips stemming can never match one: "invoice*" would look for a
+        term starting with "invoice" while the index holds "invoic". The run is
+        therefore stemmed here too.
+
+        A stem can be longer than the fragment the user typed, though, and a
+        longer prefix matches nothing while a shorter one only widens recall,
+        so the stem is used only when it is no longer than the typed run.
+        """
+        folded = ascii_fold(text.lower())
+        stemmed = stem_pattern_text(folded, language)
+        return folded if len(stemmed) > len(folded) else stemmed
+
+    return _pattern_normalizer
 
 
 def get_field_registry(language: str | None) -> FieldRegistry:
@@ -39,6 +55,7 @@ def get_field_registry(language: str | None) -> FieldRegistry:
         return _registry_cache[language]
 
     text_analyzer = paperless_text_analyzer(language).analyze
+    pattern_normalizer = _make_pattern_normalizer(language)
 
     specs = [
         dataclasses.replace(
@@ -46,7 +63,7 @@ def get_field_registry(language: str | None) -> FieldRegistry:
             analyzer=_identity_analyzer
             if field.kind is FieldKind.KEYWORD
             else text_analyzer,
-            pattern_normalizer=_pattern_normalizer,
+            pattern_normalizer=pattern_normalizer,
         )
         for field in PUBLIC_FIELDS
     ]

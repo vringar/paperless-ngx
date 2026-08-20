@@ -91,18 +91,20 @@ class TestFieldRegistry:
         assert resolved.spec.analyzer is not None
         assert resolved.spec.analyzer("ABC-123") == ["ABC-123"]
 
-    def test_pattern_normalizer_is_ascii_fold_only_no_stemming(
+    def test_pattern_normalizer_follows_the_registry_language(
         self,
         registry: FieldRegistry,
     ) -> None:
+        # Index terms are stemmed, so patterns are too, using the registry's
+        # own language: "Running" has to reach the indexed "run". Without a
+        # language the index holds surface forms, so it only case/accent-folds.
         resolved = _resolve(registry, "title")
         assert resolved.spec.pattern_normalizer is not None
-        # "running" must NOT be stemmed to "run" by the pattern normalizer,
-        # only case/accent-folded — even with English stemming configured.
-        registry_en = get_field_registry("en")
-        resolved_en = _resolve(registry_en, "title")
+        assert resolved.spec.pattern_normalizer("Running") == "running"
+
+        resolved_en = _resolve(get_field_registry("en"), "title")
         assert resolved_en.spec.pattern_normalizer is not None
-        assert resolved_en.spec.pattern_normalizer("Running") == "running"
+        assert resolved_en.spec.pattern_normalizer("Running") == "run"
 
     def test_registry_is_cached_per_language(self) -> None:
         a = get_field_registry("en")

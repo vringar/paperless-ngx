@@ -922,8 +922,15 @@ original_filename:invoice.pdf
 Matching inexact words:
 
 ```
-produ*name
+invoice*
+title:Invoice*
 ```
+
+Wildcards are matched against the _stemmed_ terms stored in the index, not
+against the words as they appear in the document. A trailing `*` therefore
+works as expected (`invoice*` finds "invoice", "invoices" and "invoiced"), but
+a pattern whose text continues past where stemming cuts a word off cannot
+match: `productname` is indexed as `productnam`, so `produ*name` finds nothing.
 
 Matching natural date keywords:
 
