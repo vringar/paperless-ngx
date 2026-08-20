@@ -1,9 +1,10 @@
 """Whoosh's compact, separator-free date spelling, resolved end to end.
 
-whoosh-compat owns both widths of this spelling and asserts them directly
-(``test_compact_numeric_datetime`` for the 8-digit calendar-day form and
-``test_compact_numeric_datetime_full_width_is_a_single_second_instant`` for
-the 14-digit instant). The 14-digit form is kept here as the single
+whoosh-compat owns both widths of this spelling and asserts both of each
+form's bounds directly: ``test_compact_numeric_datetime`` pins the 8-digit
+form as a whole calendar day (lower bound, upper bound and exclusivity), and
+``test_compact_numeric_datetime_full_width_is_a_single_second_instant`` pins
+the 14-digit form as one instant. The 14-digit form is kept here as the single
 representative because it is the one that exercises paperless's ``added``
 DATETIME fast field at full precision: the corpus separates a document at
 the named instant from one on the same calendar day at another hour and one
