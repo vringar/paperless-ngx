@@ -267,6 +267,68 @@ _FIELD_BOOSTS = {"title": 2.0}
 _SIMPLE_FIELD_BOOSTS = {"simple_title": 2.0}
 
 
+class _ConjunctiveNegations(wc.ast.Visitor[tuple["wc.ast.Node", ...]]):
+    """Collect the subtrees an AST excludes from every document it matches.
+
+    A negation reached through ``And``/``AndNot``/``Require`` (and through
+    the required half of an ``AndMaybe``) constrains the whole query, so it
+    can be re-stated above the blend. ``Or`` is deliberately not descended
+    into: in ``invoice OR NOT secret`` the negation is one branch's own
+    condition, and hoisting it would throw away documents the other branch
+    matches. Nor is a collected subtree descended into, since a negation
+    inside a negation is not an exclusion.
+
+    Node types with no negation to contribute (every leaf, ``Or``) fall
+    through to ``generic_visit``.
+    """
+
+    def generic_visit(self, node: wc.ast.Node) -> tuple[wc.ast.Node, ...]:
+        return ()
+
+    def visit_not(self, node: wc.ast.Not) -> tuple[wc.ast.Node, ...]:
+        return (node.child,)
+
+    def visit_andnot(self, node: wc.ast.AndNot) -> tuple[wc.ast.Node, ...]:
+        return (*self.visit(node.positive), node.negative)
+
+    def visit_and(self, node: wc.ast.And) -> tuple[wc.ast.Node, ...]:
+        return tuple(
+            negation for child in node.children for negation in self.visit(child)
+        )
+
+    def visit_boosted(self, node: wc.ast.Boosted) -> tuple[wc.ast.Node, ...]:
+        return self.visit(node.child)
+
+    def visit_andmaybe(self, node: wc.ast.AndMaybe) -> tuple[wc.ast.Node, ...]:
+        return self.visit(node.required)
+
+    def visit_require(self, node: wc.ast.Require) -> tuple[wc.ast.Node, ...]:
+        return (*self.visit(node.scored), *self.visit(node.filter_only))
+
+
+def _negation_clauses(
+    index: tantivy.Index,
+    ast: wc.ast.Node,
+    registry: wc.FieldRegistry,
+) -> list[tuple[tantivy.Occur, tantivy.Query]]:
+    """MustNot clauses for everything ``ast`` excludes conjunctively.
+
+    Each excluded subtree is emitted as its own positive query and attached
+    with ``MustNot``, rather than emitting a negative query and hoping
+    tantivy accepts a bare one.
+    """
+    try:
+        return [
+            (
+                tantivy.Occur.MustNot,
+                tantivy_emit(negation, index=index, registry=registry),
+            )
+            for negation in _ConjunctiveNegations().visit(ast)
+        ]
+    except QueryError as e:
+        raise _map_emit_error(e) from e
+
+
 def _any_of(clauses: list[tuple[tantivy.Occur, tantivy.Query]]) -> tantivy.Query:
     """Collapse a clause list: none -> empty, one -> itself (no wasted
     single-clause boolean_query wrapping), many -> boolean_query(clauses)."""
@@ -339,6 +401,10 @@ def parse_user_query(
     5. Optional CJK bigram clause, built from the same parsed AST for the
        same reason (see _build_ast_cjk_query): a CJK term the query negated
        or fielded must not resurface through it.
+    6. When any optional clause was added, the query's conjunctive
+       exclusions are restated as MustNot above the blend
+       (_negation_clauses): a clause built from positive terms cannot
+       express them, and as a bare Should it would undo them.
     """
     registry = get_field_registry(settings.SEARCH_LANGUAGE)
     result = wc.parse(
@@ -377,7 +443,19 @@ def parse_user_query(
     if cjk_query is not None:
         clauses.append((tantivy.Occur.Should, cjk_query))
 
-    return _any_of(clauses)
+    if len(clauses) == 1:
+        return exact
+    # The fuzzy and CJK clauses are built from positive terms only, so as
+    # plain Shoulds beside the exact clause they re-admit exactly the
+    # documents the query excluded. Restate the exclusions once, above the
+    # whole blend. Redundant against the exact clause, which already
+    # carries them, but idempotently so, and cheaper than stripping them.
+    negations = _negation_clauses(index, result.ast, registry)
+    if not negations:
+        return _any_of(clauses)
+    return tantivy.Query.boolean_query(
+        [(tantivy.Occur.Must, _any_of(clauses)), *negations],
+    )
 
 
 # The three whoosh-compat kinds for a wildcard on a field that cannot
