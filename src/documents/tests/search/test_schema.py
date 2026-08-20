@@ -140,8 +140,8 @@ class TestFastFlagAgreement:
         # whoosh-compat's registry trusts PUBLIC_FIELDS' fast flag when resolving
         # field:* existence checks (its FAST_FIELD strategy); a fast=True
         # entry whose actual tantivy column is not fast would make those
-        # searches silently match nothing at search time. build_schema()
-        # only honors the flag in its U64 and DATE branches today, so this
+        # searches silently match nothing at search time. Only the U64 and
+        # DATE descriptors can carry the flag today, so this
         # pins the agreement for EVERY kind: a future fast=True
         # TEXT/KEYWORD/JSON entry the builder silently ignores fails here
         # instead of at a user's query.
