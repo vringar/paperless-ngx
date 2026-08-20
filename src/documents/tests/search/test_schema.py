@@ -11,6 +11,7 @@ import tantivy
 from documents.search._fields import PUBLIC_FIELDS
 from documents.search._schema import SCHEMA_VERSION
 from documents.search._schema import build_schema
+from documents.search._schema import field_descriptors
 from documents.search._schema import needs_rebuild
 from documents.search._schema import schema_fingerprint
 from documents.search._tokenizer import register_tokenizers
@@ -145,12 +146,16 @@ class TestFastFlagAgreement:
         # pins the agreement for EVERY kind: a future fast=True
         # TEXT/KEYWORD/JSON entry the builder silently ignores fails here
         # instead of at a user's query.
-        schema_fast = {
-            name: bool(field["options"].get("fast", False))
-            for name, field in _schema_fields(build_schema()).items()
-        }
+        #
+        # field_descriptors() (not tantivy-py's __reduce__() pickling
+        # internals) is used as the probe here: it is exactly the input
+        # build_schema()'s SchemaBuilder consumes for the `fast` kwarg on
+        # every field kind, so it pins the same agreement without depending
+        # on a private pickled representation surviving a tantivy-py
+        # upgrade.
+        descriptor_fast = {d.name: d.fast for d in field_descriptors()}
         for public_field in PUBLIC_FIELDS:
-            assert schema_fast[public_field.name] == public_field.fast, (
-                f"{public_field.name}: PUBLIC_FIELDS says fast={public_field.fast} but the"
-                f" built schema says fast={schema_fast[public_field.name]}"
+            assert descriptor_fast[public_field.name] == public_field.fast, (
+                f"{public_field.name}: PUBLIC_FIELDS says fast={public_field.fast} but"
+                f" field_descriptors() says fast={descriptor_fast[public_field.name]}"
             )
