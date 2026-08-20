@@ -105,3 +105,70 @@ class TestFuzzyClauseWords:
         )
 
         assert _matched_ids(backend, '"tax reports"') == {near_miss.pk}
+
+
+class TestBooleanKeywordsInRawText:
+    """Tantivy's boolean keywords are word runs, so they survive the cut
+    into words and its own parser reads them as grammar. Raw query text
+    reaches that parser with its case intact, so a quoted phrase can carry
+    them in."""
+
+    @pytest.fixture
+    def corpus(self, backend: TantivyBackend) -> dict[str, int]:
+        both = _index(
+            backend,
+            title="A",
+            content="taxation reportage weekly",
+            checksum="fuzz-kw-1",
+        )
+        tax_only = _index(
+            backend,
+            title="B",
+            content="taxation only here",
+            checksum="fuzz-kw-2",
+        )
+        report_only = _index(
+            backend,
+            title="C",
+            content="reportage only here",
+            checksum="fuzz-kw-3",
+        )
+        return {
+            "both": both.pk,
+            "tax_only": tax_only.pk,
+            "report_only": report_only.pk,
+        }
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            pytest.param('"tax AND reports"', id="and"),
+            pytest.param('"tax OR reports"', id="or"),
+            pytest.param('"tax NOT reports"', id="not"),
+            pytest.param('"tax IN reports"', id="in"),
+        ],
+    )
+    def test_a_keyword_inside_a_phrase_stays_an_ordinary_word(
+        self,
+        backend: TantivyBackend,
+        corpus: dict[str, int],
+        query: str,
+    ) -> None:
+        """The phrase asks for three words, so the clause must stay the
+        disjunction it is for '"tax reports"': AND must not turn it into a
+        conjunction, NOT must not give it its own exclusion, IN must not
+        fail the parse."""
+        assert _matched_ids(backend, '"tax reports"') == set(corpus.values())
+        assert _matched_ids(backend, query) == set(corpus.values())
+
+    def test_a_trailing_keyword_does_not_drop_the_clause(
+        self,
+        backend: TantivyBackend,
+        corpus: dict[str, int],
+    ) -> None:
+        """'tax AND' is a syntax error to tantivy's parser, which would
+        cost the whole query its fuzzy clause."""
+        assert _matched_ids(backend, '"tax AND"') == {
+            corpus["both"],
+            corpus["tax_only"],
+        }

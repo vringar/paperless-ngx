@@ -190,11 +190,27 @@ def _build_ast_cjk_query(
 # tantivy's own query parser, and the raw query text the clause collects
 # routinely carries characters that parser reads as grammar (a colon, a
 # bracket, a quote, a leading -). Each token is cut into its word runs and
-# only those are kept, so nothing injectable can reach the parser. Cutting
-# rather than dropping the whole token is what keeps ordinary hyphenated,
-# dotted and quoted input ("COVID-19", "hello@example.com", "tax reports")
-# contributing to the clause at all.
+# only those are kept, so no field syntax, pattern, range or grouping can
+# reach the parser. Cutting rather than dropping the whole token is what
+# keeps ordinary hyphenated, dotted and quoted input ("COVID-19",
+# "hello@example.com", "tax reports") contributing to the clause at all.
 _WORD_RUN_RE = regex.compile(r"\w+")
+
+# The one piece of tantivy grammar that survives the cut: its boolean
+# keywords are themselves word runs. Only these exact spellings are
+# grammar there ("And"/"and" are ordinary terms), so lowercasing exactly
+# these turns them back into the ordinary terms the field analyzer used to
+# make of them, before the clause switched to raw text. Left alone, a
+# quoted phrase would silently restructure the clause ("tax AND reports"
+# becoming a conjunction) or fail to parse and drop it entirely
+# ("tax AND", or "IN" anywhere).
+#
+# Only these words are touched: tantivy lowercases query terms with the
+# field's own analyzer, and doing it ourselves first is not always the
+# same operation (Python folds a final sigma to a different letter than
+# tantivy does, and turns Turkish 'İ' into a sequence tantivy then splits
+# in two), which would search for terms the index does not contain.
+_TANTIVY_KEYWORDS: Final[frozenset[str]] = frozenset({"AND", "OR", "NOT", "IN"})
 
 
 def _try_parse_fuzzy_query(
@@ -223,7 +239,10 @@ def _try_parse_fuzzy_query(
     default fields rather than just the one the user named. That is
     recall-only widening on a secondary 0.1-boosted clause the score
     threshold already disciplines, accepted in exchange for never feeding
-    field syntax to tantivy's parser.
+    field syntax to tantivy's parser. What the word string guarantees is
+    exactly that: no field prefix, pattern, range, grouping or quoting
+    survives, and the boolean keywords that do survive (they are word
+    runs) are lowercased into ordinary terms; see _TANTIVY_KEYWORDS.
 
     The words are the query's RAW text, not the analyzer's output
     (``analyzed=False``), because ``index.parse_query`` analyzes whatever
@@ -246,7 +265,11 @@ def _try_parse_fuzzy_query(
         analyzed=False,
     )
     words = list(
-        dict.fromkeys(word for token in tokens for word in _WORD_RUN_RE.findall(token)),
+        dict.fromkeys(
+            word.lower() if word in _TANTIVY_KEYWORDS else word
+            for token in tokens
+            for word in _WORD_RUN_RE.findall(token)
+        ),
     )
     if not words:
         return None
@@ -468,7 +491,7 @@ def parse_user_query(
     # plain Shoulds beside the exact clause they re-admit exactly the
     # documents the query excluded. Restate the exclusions once, above the
     # whole blend. Redundant against the exact clause, which already
-    # carries them, but idempotently so, and cheaper than stripping them.
+    # carries them, but idempotently so.
     negations = _negation_clauses(index, result.ast, registry)
     if not negations:
         return _any_of(clauses)

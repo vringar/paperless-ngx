@@ -109,3 +109,45 @@ class TestNegationConstrainsEveryClause:
             secret_invoice.pk,
             unrelated.pk,
         }
+
+    def test_a_negation_under_or_does_not_constrain_the_cjk_clause(
+        self,
+        backend: TantivyBackend,
+    ) -> None:
+        """The limit of the hoist, pinned deliberately.
+
+        An exclusion that is one branch's own condition cannot be restated
+        above the blend without dropping documents the other branch
+        matches, so it is left where it is and the CJK clause stays
+        unconstrained by it. That shows through here in a way it does not
+        for latin text: the exact clause cannot match a CJK run at all, so
+        the CJK clause is the only thing matching the tokyo documents, and
+        the secret one comes with it.
+        """
+        secret = _index(
+            backend,
+            title="Tokyo A",
+            content="東京都の秘密です secret",
+            checksum="neg-or-cjk-1",
+        )
+        public = _index(
+            backend,
+            title="Tokyo B",
+            content="東京都の報告書です public",
+            checksum="neg-or-cjk-2",
+        )
+        bill = _index(
+            backend,
+            title="Bill",
+            content="bill payment received",
+            checksum="neg-or-cjk-3",
+        )
+
+        assert _matched_ids(backend, "(東京 AND NOT secret) OR bill") == {
+            bill.pk,
+            public.pk,
+            secret.pk,
+        }
+        # The same exclusion in conjunctive position is hoisted, and does
+        # constrain the CJK clause.
+        assert _matched_ids(backend, "東京 AND NOT secret") == {public.pk}

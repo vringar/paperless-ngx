@@ -15,6 +15,8 @@ import pytest
 from documents.models import Document
 
 if TYPE_CHECKING:
+    from pytest_django.fixtures import SettingsWrapper
+
     from documents.search._backend import TantivyBackend
 
 pytestmark = [pytest.mark.search, pytest.mark.django_db]
@@ -49,11 +51,29 @@ class TestCjkClauseFollowsTheParsedQuery:
         assert _matched_ids(backend, "invoice") == {with_cjk.pk, without_cjk.pk}
         assert _matched_ids(backend, "invoice NOT 漢字") == {without_cjk.pk}
 
+    @pytest.mark.parametrize(
+        ("threshold", "expected"),
+        [
+            pytest.param(None, {"titled"}, id="fuzzy_off"),
+            pytest.param(0.0, {"titled", "content_only"}, id="fuzzy_on"),
+        ],
+    )
     def test_fielded_cjk_term_searches_only_that_field(
         self,
         backend: TantivyBackend,
+        settings: SettingsWrapper,
+        threshold: float | None,
+        expected: set[str],
     ) -> None:
-        """'title:東京' must not match a document whose 東京 is in the content."""
+        """'title:東京' must not match a document whose 東京 is in the content.
+
+        The CJK clause honours the field. The fuzzy clause, when enabled,
+        does not: it contributes every free-text term UNFIELDED by design
+        (see _try_parse_fuzzy_query), so it brings the content-only
+        document back on its own 0.1-boosted terms. That is the documented
+        trade-off, pinned here so it stays deliberate.
+        """
+        settings.ADVANCED_FUZZY_SEARCH_THRESHOLD = threshold
         content_only = _index(
             backend,
             title="Tokyo report",
@@ -66,9 +86,10 @@ class TestCjkClauseFollowsTheParsedQuery:
             content="an english summary",
             checksum="cjk-field-2",
         )
+        pks = {"titled": titled.pk, "content_only": content_only.pk}
 
-        assert _matched_ids(backend, "東京") == {content_only.pk, titled.pk}
-        assert _matched_ids(backend, "title:東京") == {titled.pk}
+        assert _matched_ids(backend, "東京") == set(pks.values())
+        assert _matched_ids(backend, "title:東京") == {pks[label] for label in expected}
 
     def test_cjk_on_a_non_default_field_builds_no_clause(
         self,
