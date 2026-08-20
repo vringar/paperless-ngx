@@ -113,6 +113,20 @@ class TestPhraseSearch:
 
 
 class TestTagCommaList:
+    """``tag:bills,unpaid`` is published syntax (docs/usage.md), so this checks
+    that the documented spelling still returns what the docs promise: only the
+    document carrying every listed tag.
+
+    It is deliberately not proof of paperless's field configuration, and must
+    not be read as such. Removing ``comma_values`` from the ``tag`` FieldSpec
+    leaves this test passing, because paperless's analyzer splits the literal
+    value "bills,unpaid" into the same two tokens the value-list reading
+    produces, so the two readings select the same documents. The registry fact
+    -- that ``tag`` opts in and no other field does -- is observable only at
+    the registry, and is owned by test_registry.py's
+    ``test_tag_is_comma_values``/``test_correspondent_is_not_comma_values``.
+    """
+
     def test_comma_list_requires_every_listed_tag(
         self,
         backend: TantivyBackend,
