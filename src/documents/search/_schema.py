@@ -19,7 +19,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("paperless.search")
 
 # v1 - Initial tantivy schema format
-SCHEMA_VERSION: Final[int] = 1
+# v2 - build_schema() derived from PUBLIC_FIELDS, changing the field declaration
+#      order, and the write-only correspondent/document_type/storage_path/tag id
+#      columns dropped. tantivy compares schemas by ordered field list, so an
+#      index built by v1 rejects every write against the v2 schema.
+SCHEMA_VERSION: Final[int] = 2
 
 
 def build_schema() -> tantivy.Schema:
@@ -109,15 +113,8 @@ def build_schema() -> tantivy.Schema:
     # The stored value is never read back, so storing it only wastes space.
     sb.add_text_field("autocomplete_word", stored=False, tokenizer_name="raw")
 
-    for field in (
-        "correspondent_id",
-        "document_type_id",
-        "storage_path_id",
-        "tag_id",
-        "owner_id",
-        "viewer_id",
-        "viewer_group_id",
-    ):
+    # Permission filter columns, read by build_permission_filter.
+    for field in ("owner_id", "viewer_id", "viewer_group_id"):
         sb.add_unsigned_field(field, stored=False, indexed=True, fast=True)
 
     return sb.build()

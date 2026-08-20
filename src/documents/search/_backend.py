@@ -506,7 +506,6 @@ class TantivyBackend:
             doc.add_text("correspondent_sort", document.correspondent.name)
             if cjk_corr := extract_cjk_text(document.correspondent.name):
                 doc.add_text("bigram_correspondent", cjk_corr)
-            doc.add_unsigned("correspondent_id", document.correspondent_id)
 
         # Document type
         if document.document_type:
@@ -514,12 +513,10 @@ class TantivyBackend:
             doc.add_text("type_sort", document.document_type.name)
             if cjk_type := extract_cjk_text(document.document_type.name):
                 doc.add_text("bigram_document_type", cjk_type)
-            doc.add_unsigned("document_type_id", document.document_type_id)
 
         # Storage path
         if document.storage_path:
             doc.add_text("storage_path", document.storage_path.name)
-            doc.add_unsigned("storage_path_id", document.storage_path_id)
 
         # Tags — collect names for autocomplete in the same pass
         tag_names: list[str] = []
@@ -527,7 +524,6 @@ class TantivyBackend:
             doc.add_text("tag", tag.name)
             if cjk_tag := extract_cjk_text(tag.name):
                 doc.add_text("bigram_tag", cjk_tag)
-            doc.add_unsigned("tag_id", tag.pk)
             tag_names.append(tag.name)
 
         # Notes — JSON for structured queries (notes.user:alice, notes.note:text).
