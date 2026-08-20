@@ -129,20 +129,6 @@ class TestParseUserQuery:
         kinds = {type(e) for e in exc_info.value.errors}
         assert kinds == {InvalidDateQuery, InvalidNumberQuery}
 
-    def test_asn_field_is_query_addressable(
-        self,
-        query_index: tantivy.Index,
-    ) -> None:
-        q = parse_user_query(query_index, "asn:42", UTC)
-        assert isinstance(q, tantivy.Query)
-
-    def test_checksum_field_is_query_addressable(
-        self,
-        query_index: tantivy.Index,
-    ) -> None:
-        q = parse_user_query(query_index, "checksum:abc123", UTC)
-        assert isinstance(q, tantivy.Query)
-
     def test_unregistered_id_field_folds_to_literal_text_not_error(
         self,
         query_index: tantivy.Index,

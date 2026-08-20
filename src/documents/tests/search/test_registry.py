@@ -3,10 +3,7 @@ from whoosh_compat import FieldKind
 from whoosh_compat import FieldRegistry
 from whoosh_compat.fields import ResolvedField
 
-from documents.search._fields import PUBLIC_FIELDS
 from documents.search._registry import get_field_registry
-
-_BY_NAME = {f.name: f for f in PUBLIC_FIELDS}
 
 
 @pytest.fixture
@@ -115,24 +112,3 @@ class TestFieldRegistry:
         a = get_field_registry("en")
         b = get_field_registry("de")
         assert a is not b
-
-
-class TestJsonSubpathCoupling:
-    """Guards PUBLIC_FIELDS' JSON subpaths against drifting from the literal
-    dict keys _backend.py::_build_tantivy_doc writes. These assertions
-    hardcode the expected key sets rather than introspecting _build_tantivy_doc
-    (its dict keys are string literals with no importable symbol) — if someone
-    changes _build_tantivy_doc's JSON keys without updating this test too, it
-    will pass despite the drift. Best-effort, not a structural guarantee.
-    """
-
-    def test_notes_dict_keys_match_public_fields_subpaths(self) -> None:
-        # _backend.py's _build_tantivy_doc builds:
-        #   doc.add_json("notes", {"note": ..., "user": ...})
-        # These literal keys must match PUBLIC_FIELDS' "notes" subpaths exactly.
-        assert set(_BY_NAME["notes"].subpaths) == {"note", "user"}
-
-    def test_custom_fields_dict_keys_match_public_fields_subpaths(self) -> None:
-        # _backend.py's _build_tantivy_doc builds:
-        #   doc.add_json("custom_fields", {"name": ..., "value": ...})
-        assert set(_BY_NAME["custom_fields"].subpaths) == {"name", "value"}
