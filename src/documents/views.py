@@ -3639,6 +3639,10 @@ class GlobalSearchView(PassUserMixin):
             return HttpResponseBadRequest("Query required")
         if len(query) < 3:
             return HttpResponseBadRequest("Query must be at least 3 characters")
+        if len(query) > _MAX_QUERY_LENGTH:
+            return HttpResponseBadRequest(
+                f"Query must be at most {_MAX_QUERY_LENGTH} characters",
+            )
 
         db_only = request.query_params.get("db_only", False)
 

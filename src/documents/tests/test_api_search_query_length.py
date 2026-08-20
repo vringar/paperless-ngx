@@ -149,3 +149,37 @@ class TestPostSelectionPathsEnforceTheCap:
         message = str(response.data["query"])
         assert str(_MAX_QUERY_LENGTH) in message
         assert str(_MAX_QUERY_LENGTH + 1) in message
+
+
+class TestGlobalSearchEnforcesTheCapToo:
+    """GlobalSearchView calls the backend directly, not through the shared helper.
+
+    It hardcodes SearchMode.TEXT, which is linear rather than quadratic, so it
+    was never the CPU-exhaustion vector. It is capped anyway so that "every
+    user query string reaching the backend passes a length check" is an
+    invariant rather than a claim with an exception: the view already bounds
+    the query from below, and a later change letting it select a mode would
+    otherwise reopen the hole silently.
+    """
+
+    def test_query_one_over_the_cap_is_a_400(
+        self,
+        admin_client: APIClient,
+        indexed_document: Document,
+    ) -> None:
+        response = admin_client.get(
+            "/api/search/",
+            {"query": "a" * (_MAX_QUERY_LENGTH + 1)},
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_query_at_exactly_the_cap_is_accepted(
+        self,
+        admin_client: APIClient,
+        indexed_document: Document,
+    ) -> None:
+        response = admin_client.get(
+            "/api/search/",
+            {"query": "a" * _MAX_QUERY_LENGTH},
+        )
+        assert response.status_code == status.HTTP_200_OK
