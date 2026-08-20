@@ -271,6 +271,11 @@ class TestDocumentedDateForms:
             ("added:2005-03", "old"),
             ("added:[2005-01-01 to 2005-12-31]", "old"),
             ("added:[2005 to 2009]", "old"),
+            # A full timestamp works, but only quoted when it stands alone,
+            # and only unquoted when it is a range bound. The bare standalone
+            # spelling is pinned as a non-match below.
+            ('added:"2005-03-04T15:30:00Z"', "old"),
+            ("added:[2005-03-04T09:00:00Z to 2005-03-04T17:00:00Z]", "old"),
         ],
     )
     def test_documented_date_form_matches_its_day_or_month(
@@ -291,12 +296,19 @@ class TestDocumentedDateForms:
             "added:now",
             "added:noon",
             "added:midnight",
+            # Quoting is what rescues the other multi-word date expressions,
+            # so pin that it does not rescue these: the problem is the width
+            # of the resulting range, not the way the value is delimited.
+            'added:"now"',
+            'added:"midnight"',
             'added:"-3 days"',
             'added:"-1 week"',
             # The trap: this reports no diagnostics but parses as
             # And(added:now, "3", "days") - added:now plus stray text.
             "added:now - 3 days",
-            # A time-of-day component is split off and searched as text.
+            # The bare, unquoted spelling of a full timestamp. The quoted and
+            # range-bound spellings above do work and match this fixture's
+            # document; only this one silently degrades to a non-match.
             "added:2005-03-04T15:30:00Z",
         ],
     )

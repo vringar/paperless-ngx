@@ -981,18 +981,21 @@ created:2005-03-04
 added:january
 modified:"next monday"
 added:"last monday"
+added:"2005-01-01T00:00:00Z"
 created:[2005-01-01 to 2005-01-31]
+added:[2005-06-15T09:00:00Z to 2005-06-15T17:00:00Z]
 ```
 
 - `tomorrow`, like `today` and `yesterday`, covers that whole day.
 - An ISO date such as `2005-03-04` covers that whole day, and `2005-01` covers that whole month.
 - A month name such as `january` covers that whole month in the current year.
 - `next <weekday>` and `last <weekday>` each cover that whole day and must be quoted. A bare weekday name such as `monday` is not accepted.
-- A range takes two of the above as its bounds, for example `created:[2005 to 2009]` or `added:[2005-01-01 to 2005-01-31]`.
+- A full timestamp such as `2005-01-01T00:00:00Z` matches that exact instant. Like the other expressions above, it has to be quoted when it stands on its own: `added:"2005-01-01T00:00:00Z"`.
+- A range takes two of the above as its bounds, for example `created:[2005 to 2009]` or `added:[2005-01-01 to 2005-01-31]`. Bounds may carry a time of day, and inside the brackets they are written without quotes.
 
 !!! warning
 
-    `now`, `noon`, `midnight` and relative offsets such as `"-3 days"` or `"-1 week"` are accepted by the parser but resolve to a single instant rather than to a span of time, so they match only a document whose timestamp is exactly that instant, which in practice means no documents at all. Spellings like `now-3days` and `"3 days ago"` are rejected outright. A timestamp carrying a time of day, such as `2005-01-01T00:00:00Z`, is not understood either: the time portion is split off and searched as ordinary text, which usually leaves the query matching nothing. To bound a search by time, use a range with whole-day bounds instead.
+    `now`, `noon`, `midnight` and relative offsets such as `"-3 days"` or `"-1 week"` are accepted by the parser but resolve to a single instant rather than to a span of time, so they match only a document whose timestamp is exactly that instant, which in practice means no documents at all. Quoting does not change this. Spellings like `now-3days` and `"3 days ago"` are rejected outright.
 
 #### Searching custom fields
 
