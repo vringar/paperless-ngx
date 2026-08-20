@@ -603,7 +603,15 @@ def parse_simple_text_highlight_query(
     if not tokens:
         return tantivy.Query.empty_query()
 
-    return index.parse_query(" ".join(tokens), ["content"])
+    # Quote each token as its own phrase, escaping backslashes and embedded
+    # quotes. simple search tokens can carry arbitrary Tantivy syntax
+    # characters (`"`, `:`, `(`, `[`, `/`, ...) that the query-string parser
+    # would otherwise interpret as query grammar rather than literal text.
+    quoted_tokens = [
+        '"' + token.replace("\\", "\\\\").replace('"', '\\"') + '"' for token in tokens
+    ]
+
+    return index.parse_query(" ".join(quoted_tokens), ["content"])
 
 
 def parse_simple_text_query(

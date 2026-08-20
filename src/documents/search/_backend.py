@@ -717,7 +717,17 @@ class TantivyBackend:
         user_query = self._parse_query(query, search_mode)
         highlight_query = user_query
         if search_mode is SearchMode.TEXT:
-            highlight_query = parse_simple_text_highlight_query(self._index, query)
+            try:
+                highlight_query = parse_simple_text_highlight_query(
+                    self._index,
+                    query,
+                )
+            except ValueError:
+                logger.debug(
+                    "Skipping simple text highlight query: token string is not "
+                    "valid tantivy query syntax: %r",
+                    query,
+                )
 
         # For notes_text snippet generation, we need a query that targets the
         # notes_text field directly. user_query may contain JSON-field terms
