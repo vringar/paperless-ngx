@@ -886,6 +886,19 @@ Matching documents with logical expressions:
 
 ```
 shopname AND (product1 OR product2)
+invoice NOT draft
+```
+
+`AND`, `OR` and `NOT` must be written in capitals, and parentheses group sub-expressions. Terms written next to each other with no operator between them are combined with `AND`.
+
+!!! warning
+
+    A leading `-` does **not** exclude a term. Separators are stripped during indexing, so `invoice -secret` searches for `invoice` and `secret`, which is the opposite of what you probably intended. Use `NOT` to exclude a term: `invoice NOT secret`.
+
+Matching an exact phrase, in order, by quoting it:
+
+```
+"quick brown fox"
 ```
 
 Matching specific tags, correspondents or types:
@@ -893,7 +906,11 @@ Matching specific tags, correspondents or types:
 ```
 type:invoice tag:unpaid
 correspondent:university certificate
+tag:bills,unpaid
 ```
+
+- `document_type` may be abbreviated to `type`, and `storage_path` to `path`.
+- A comma-separated list after `tag:` requires **all** of the listed tags, so `tag:bills,unpaid` matches only documents tagged both `bills` and `unpaid`.
 
 Matching dates:
 
@@ -908,16 +925,18 @@ Matching by archive metadata:
 ```
 asn:100
 page_count:12
-checksum:a1b2c3d4
+num_notes:0
+checksum:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 original_filename:invoice.pdf
 ```
 
 - `asn` matches a document's Archive Serial Number.
 - `page_count` matches a document's page count.
-- `checksum` matches the checksum of the original document file (not the
-  archived/processed version).
-- `original_filename` matches the filename of the document as originally
-  consumed.
+- `num_notes` matches how many notes a document has.
+- `checksum` matches the checksum of the original document file (not the archived/processed version). Unlike the text fields, this one is stored verbatim rather than tokenized, so only a complete, lowercase checksum matches. To search by the first few characters instead, use a wildcard: `checksum:9f86d081*`. Because the field is not stemmed, that prefix is matched literally.
+- `original_filename` matches the filename of the document as originally consumed.
+
+`asn`, `page_count` and `num_notes` are numeric and also accept ranges, for example `asn:[50 to 150]`.
 
 Matching inexact words:
 
@@ -953,6 +972,27 @@ modified:"this year"
 Supported date keywords: `today`, `yesterday`, `previous week`,
 `this month`, `previous month`, `this year`, `previous year`,
 `previous quarter`.
+
+These other date forms also work after a date field:
+
+```
+added:tomorrow
+created:2005-03-04
+added:january
+modified:"next monday"
+added:"last monday"
+created:[2005-01-01 to 2005-01-31]
+```
+
+- `tomorrow`, like `today` and `yesterday`, covers that whole day.
+- An ISO date such as `2005-03-04` covers that whole day, and `2005-01` covers that whole month.
+- A month name such as `january` covers that whole month in the current year.
+- `next <weekday>` and `last <weekday>` each cover that whole day and must be quoted. A bare weekday name such as `monday` is not accepted.
+- A range takes two of the above as its bounds, for example `created:[2005 to 2009]` or `added:[2005-01-01 to 2005-01-31]`.
+
+!!! warning
+
+    `now`, `noon`, `midnight` and relative offsets such as `"-3 days"` or `"-1 week"` are accepted by the parser but resolve to a single instant rather than to a span of time, so they match only a document whose timestamp is exactly that instant, which in practice means no documents at all. Spellings like `now-3days` and `"3 days ago"` are rejected outright. A timestamp carrying a time of day, such as `2005-01-01T00:00:00Z`, is not understood either: the time portion is split off and searched as ordinary text, which usually leaves the query matching nothing. To bound a search by time, use a range with whole-day bounds instead.
 
 #### Searching custom fields
 
@@ -999,9 +1039,7 @@ notes.user:alice notes.note:insurance
 
 The bare `notes:` prefix is shorthand for `notes.note:`.
 
-All of these constructs can be combined as you see fit. If you want to
-learn more about the query language used by paperless, see the
-[Tantivy query language documentation](https://docs.rs/tantivy/latest/tantivy/query/struct.QueryParser.html).
+All of these constructs can be combined as you see fit. What is described above is the whole of the query language paperless supports. It resembles other search query languages without being identical to any of them, so a construct that is not documented here is most likely treated as ordinary search text rather than as syntax, and an unrecognized field name is searched as text too.
 
 !!! note
 
