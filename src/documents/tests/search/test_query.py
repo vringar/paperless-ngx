@@ -34,6 +34,27 @@ def query_index() -> tantivy.Index:
     return idx
 
 
+@pytest.fixture(scope="module")
+def populated_index() -> tantivy.Index:
+    """An index holding one document, so a query matching nothing is
+    distinguishable from one matching everything."""
+    idx = tantivy.Index(build_schema(), path=None)
+    register_tokenizers(idx, "")
+    writer = idx.writer()
+    doc = tantivy.Document()
+    doc.add_unsigned("id", 1)
+    doc.add_text("content", "needle in indexed content")
+    writer.add_document(doc)
+    writer.commit()
+    idx.reload()
+    return idx
+
+
+def _highlight_hit_count(index: tantivy.Index, raw_query: str) -> int:
+    query = parse_simple_text_highlight_query(index, raw_query)
+    return index.searcher().search(query, limit=1).count
+
+
 class TestParseUserQuery:
     """parse_user_query runs the full preprocessing pipeline."""
 
@@ -166,16 +187,25 @@ class TestParseSimpleTextHighlightQuery:
             tantivy.Query,
         )
 
-    def test_empty_query_returns_empty_query(self, query_index: tantivy.Index) -> None:
-        result = parse_simple_text_highlight_query(query_index, "")
-        assert isinstance(result, tantivy.Query)
-
-    def test_all_operators_returns_empty_query(
+    def test_a_real_token_matches_the_corpus(
         self,
-        query_index: tantivy.Index,
+        populated_index: tantivy.Index,
     ) -> None:
-        result = parse_simple_text_highlight_query(query_index, "- +")
-        assert isinstance(result, tantivy.Query)
+        """Without this, an empty corpus would make the two assertions below
+        pass for a query that matches every document."""
+        assert _highlight_hit_count(populated_index, "needle") == 1
+
+    def test_empty_query_matches_no_document(
+        self,
+        populated_index: tantivy.Index,
+    ) -> None:
+        assert _highlight_hit_count(populated_index, "") == 0
+
+    def test_all_operators_query_matches_no_document(
+        self,
+        populated_index: tantivy.Index,
+    ) -> None:
+        assert _highlight_hit_count(populated_index, "- +") == 0
 
 
 class TestPermissionFilter:
