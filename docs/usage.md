@@ -933,7 +933,7 @@ original_filename:invoice.pdf
 - `asn` matches a document's Archive Serial Number.
 - `page_count` matches a document's page count.
 - `num_notes` matches how many notes a document has.
-- `checksum` matches the checksum of the original document file (not the archived/processed version). Unlike the text fields, this one is stored verbatim rather than tokenized, so only a complete, lowercase checksum matches. To search by the first few characters instead, use a wildcard: `checksum:9f86d081*`. Because the field is not stemmed, that prefix is matched literally.
+- `checksum` matches the checksum of the original document file (not the archived/processed version). Unlike the text fields, this one is stored verbatim rather than tokenized, so only a complete, lowercase checksum matches. To search by the first few characters instead, use a wildcard: `checksum:9f86d081*`. Wildcard patterns on the text fields are stemmed to line up with the stemmed index, but `checksum` is indexed without stemming, so its patterns are not stemmed either and the prefix is matched exactly as typed.
 - `original_filename` matches the filename of the document as originally consumed.
 
 `asn`, `page_count` and `num_notes` are numeric and also accept ranges, for example `asn:[50 to 150]`.

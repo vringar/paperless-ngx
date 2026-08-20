@@ -22,16 +22,22 @@ def _identity_analyzer(text: str) -> list[str]:
     return [text]
 
 
+def _fold_normalizer(text: str) -> str:
+    """Wildcard/regex literal-run normalizer for fields indexed without stemming."""
+    return ascii_fold(text.lower())
+
+
 def _make_pattern_normalizer(language: str | None) -> Callable[[str], str]:
     """Build the wildcard/regex literal-run normalizer for a search language."""
 
     def _pattern_normalizer(text: str) -> str:
         """Normalize a literal run so it can match indexed terms.
 
-        Index terms go through lowercase -> ascii_fold -> stem, so a pattern
-        that skips stemming can never match one: "invoice*" would look for a
-        term starting with "invoice" while the index holds "invoic". The run is
-        therefore stemmed here too.
+        TEXT index terms go through lowercase -> ascii_fold -> stem, so a
+        pattern that skips stemming can never match one: "invoice*" would look
+        for a term starting with "invoice" while the index holds "invoic". The
+        run is therefore stemmed here too. KEYWORD fields are indexed raw and
+        get _fold_normalizer instead, so their patterns stay literal.
 
         A stem can be longer than the fragment the user typed, though, and a
         longer prefix matches nothing, so the stem is used only when it is no
@@ -67,7 +73,9 @@ def get_field_registry(language: str | None) -> FieldRegistry:
             analyzer=_identity_analyzer
             if field.kind is FieldKind.KEYWORD
             else text_analyzer,
-            pattern_normalizer=pattern_normalizer,
+            pattern_normalizer=_fold_normalizer
+            if field.kind is FieldKind.KEYWORD
+            else pattern_normalizer,
         )
         for field in PUBLIC_FIELDS
     ]
