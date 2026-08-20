@@ -34,8 +34,12 @@ def _make_pattern_normalizer(language: str | None) -> Callable[[str], str]:
         therefore stemmed here too.
 
         A stem can be longer than the fragment the user typed, though, and a
-        longer prefix matches nothing while a shorter one only widens recall,
-        so the stem is used only when it is no longer than the typed run.
+        longer prefix matches nothing, so the stem is used only when it is no
+        longer than the typed run. Length is a proxy for "the stem stayed close
+        to what was typed", not a guarantee of wider recall: a stem that
+        substitutes rather than truncates ("copy" -> "copi") moves the pattern
+        sideways instead of widening it, so "copy*" gains "copies" and loses
+        "copyright". test_pattern_stemming.py pins that trade.
         """
         folded = ascii_fold(text.lower())
         stemmed = stem_pattern_text(folded, language)
