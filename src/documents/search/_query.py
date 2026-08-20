@@ -26,8 +26,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("paperless.search")
 
-# Maximum seconds any single regex substitution may run.
-# Prevents ReDoS on adversarial user-supplied query strings.
+# Maximum seconds any single regex substitution over user-supplied query text
+# may run. The one remaining use is a character class, which cannot backtrack,
+# so the bound is an upper limit on that substitution's cost, not the ReDoS
+# guard it was originally written as.
 _REGEX_TIMEOUT: Final[float] = 1.0
 
 # Matches CJK/Hangul characters so queries can be routed to bigram fields.
@@ -62,11 +64,11 @@ def _map_emit_error(e: QueryError) -> SearchQueryError:
     INVALID_INPUT/UNSUPPORTED are user-input errors, exactly like a parse
     diagnostic, and map to a 400. INTERNAL means a defect in whoosh-compat
     or in our own AST handling, never the user's query, so the QueryError is
-    re-raised to surface the same way views.py already lets QueryParserError
-    surface. MISCONFIGURED is deliberately both: the registry and the index
-    schema disagree, which only an operator can fix, so it is logged as an
-    error, but a request is still waiting and the query cannot run either
-    way, so it also returns a 400.
+    re-raised rather than converted, reaching the generic 500 handler instead
+    of blaming the query. MISCONFIGURED is deliberately both: the registry and
+    the index schema disagree, which only an operator can fix, so it is logged
+    as an error, but a request is still waiting and the query cannot run
+    either way, so it also returns a 400.
 
     EXISTS_REQUIRES_FAST is the one MISCONFIGURED kind that is not a
     disagreement. whoosh-compat derives it from the registry's own FieldSpec
