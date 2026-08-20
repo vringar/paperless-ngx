@@ -11,10 +11,19 @@ matches while foo-only/bar-only correspondents do not.
 
 The list semantics are AND (a document must carry every listed value),
 not OR: a foo-only or bar-only document does not match ``tag:foo,bar``.
+
+A comma is only a value-list delimiter when what follows it is a value. A
+comma directly before another field name separates two clauses instead,
+on ``comma_values`` and ordinary fields alike -- ``tag:foo,added:2005-03-04``
+is "tagged foo AND added that day", not "tagged both foo and
+added:2005-03-04". That reading was asserted before the whoosh-compat
+migration and nowhere after it, so it is pinned here.
 """
 
 from __future__ import annotations
 
+from datetime import UTC
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -137,3 +146,86 @@ class TestNonCommaValuesFieldTreatsCommaAsLiteralText:
         # or neither (an AND, since no single correspondent carries both
         # values). Either way it would NOT match literal_doc alone.
         assert _matched_ids(backend, "correspondent:foo,bar") == {literal_doc.pk}
+
+
+class TestCommaBeforeAKnownFieldIsAClauseSeparator:
+    """The discriminating half: the value-list reading and the clause-separator
+    reading disagree about every query below.
+
+    On ``tag`` (the one ``comma_values`` field) a value-list reading of
+    ``tag:foo,added:2005-03-04`` demands a tag literally named
+    "added:2005-03-04", so it matches nothing at all. On ``title`` (not
+    ``comma_values``) the alternative is the literal reading proven in
+    TestNonCommaValuesFieldTreatsCommaAsLiteralText, i.e. a title containing
+    the text "Alpha,tag:foo", which matches nothing either. Both are exact-set
+    assertions against a corpus that separates the readings, so neither
+    alternative survives.
+    """
+
+    @pytest.fixture
+    def docs(self, backend: TantivyBackend) -> dict[str, int]:
+        foo = Tag.objects.create(name="foo")
+        bar = Tag.objects.create(name="bar")
+
+        both = Document.objects.create(
+            title="Alpha",
+            content="x",
+            checksum="comma-clause-both",
+            added=datetime(2005, 3, 4, 15, 30, tzinfo=UTC),
+        )
+        both.tags.set([foo])
+        backend.add_or_update(both)
+
+        tag_only = Document.objects.create(
+            title="Alpha",
+            content="x",
+            checksum="comma-clause-tag-only",
+            added=datetime(2010, 7, 1, 15, 30, tzinfo=UTC),
+        )
+        tag_only.tags.set([foo])
+        backend.add_or_update(tag_only)
+
+        date_only = Document.objects.create(
+            title="Beta",
+            content="x",
+            checksum="comma-clause-date-only",
+            added=datetime(2005, 3, 4, 15, 30, tzinfo=UTC),
+        )
+        date_only.tags.set([bar])
+        backend.add_or_update(date_only)
+
+        return {
+            "both": both.pk,
+            "tag_only": tag_only.pk,
+            "date_only": date_only.pk,
+        }
+
+    def test_comma_separates_a_comma_values_field_from_a_date_clause(
+        self,
+        backend: TantivyBackend,
+        docs: dict[str, int],
+    ) -> None:
+        assert _matched_ids(backend, "tag:foo,added:2005-03-04") == {docs["both"]}
+
+    def test_comma_separates_an_ordinary_field_from_a_tag_clause(
+        self,
+        backend: TantivyBackend,
+        docs: dict[str, int],
+    ) -> None:
+        assert _matched_ids(backend, "title:Alpha,tag:foo") == {
+            docs["both"],
+            docs["tag_only"],
+        }
+
+    def test_each_clause_alone_matches_more_than_the_pair(
+        self,
+        backend: TantivyBackend,
+        docs: dict[str, int],
+    ) -> None:
+        """Both clauses must be doing work: if the separator dropped either
+        side, the pair would match whatever the surviving side matches."""
+        assert _matched_ids(backend, "tag:foo") == {docs["both"], docs["tag_only"]}
+        assert _matched_ids(backend, "added:2005-03-04") == {
+            docs["both"],
+            docs["date_only"],
+        }
