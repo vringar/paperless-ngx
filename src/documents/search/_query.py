@@ -9,6 +9,7 @@ import tantivy
 import whoosh_compat as wc
 from django.conf import settings
 from whoosh_compat.emitters.tantivy_ import emit as tantivy_emit
+from whoosh_compat.errors import Cause
 from whoosh_compat.errors import Diagnostic
 from whoosh_compat.errors import DiagnosticKind
 from whoosh_compat.errors import QueryError
@@ -114,16 +115,47 @@ def _rewrite_bare_json_field_prefixes(raw_query: str) -> str:
 def _user_facing_emit_message(d: Diagnostic) -> str:
     """A user-safe message for an emit-time QueryError's Diagnostic.
 
-    whoosh-compat's own Diagnostic.message is developer/log output with no
-    stability guarantee (branch on kind, never parse the message). Only
-    EXISTS_REQUIRES_FAST needs a distinct user-facing rewrite: its message
-    advises marking the field fast=True, a host configuration action the
-    user can't act on; the user just needs to know the search form is
-    unsupported here.
+    Built from the Diagnostic's structured fields (kind, field), never from
+    d.message: whoosh-compat documents that as developer/log output with no
+    stability guarantee, and PATTERN_TOO_COMPLEX embeds the raw backend
+    error text in it.
     """
+    field = str(d.field) if d.field is not None else None
     if d.kind is DiagnosticKind.EXISTS_REQUIRES_FAST:
-        return "existence searches (field:*) are not supported for this field"
-    return d.message
+        return f"Existence searches (field:*) are not supported for field {field!r}."
+    if d.kind is DiagnosticKind.TEXT_RANGE:
+        return f"Range searches are not supported for field {field!r}."
+    if d.kind is DiagnosticKind.PATTERN_TOO_COMPLEX:
+        return f"The wildcard pattern for field {field!r} is too complex."
+    if d.kind is DiagnosticKind.SCHEMA_FIELD_MISSING:
+        return f"Field {field!r} is not available in the search index."
+    logger.warning("Unmapped emit diagnostic %s: %s", d.kind, d.message)
+    return "The search query could not be executed."
+
+
+def _map_emit_error(e: QueryError) -> SearchQueryError:
+    """Route an emit-time QueryError by its Diagnostic's Cause.
+
+    INVALID_INPUT/UNSUPPORTED are user-input errors, exactly like a parse
+    diagnostic, and map to a 400. INTERNAL means a defect in whoosh-compat
+    or in our own AST handling, never the user's query, so the QueryError is
+    re-raised to surface the same way views.py already lets QueryParserError
+    surface. MISCONFIGURED is deliberately both: the registry and the index
+    schema disagree, which only an operator can fix, so it is logged as an
+    error, but a request is still waiting and the query cannot run either
+    way, so it also returns a 400.
+    """
+    d = e.diagnostic
+    if d.cause is Cause.INTERNAL:
+        raise e
+    if d.cause is Cause.MISCONFIGURED:
+        logger.error(
+            "Search index misconfiguration for field %s (%s): %s",
+            d.field,
+            d.kind.name,
+            d.message,
+        )
+    return SearchQueryError(_user_facing_emit_message(d))
 
 
 def _has_cjk(text: str) -> bool:
@@ -318,8 +350,10 @@ def parse_user_query(
        and raise — the view returns HTTP 400 with every offending field
        listed, not just the first.
     3. emit() turns the AST into a tantivy.Query directly (no string
-       round-trip). QueryError (a construct that parses but can't execute
-       against tantivy, e.g. a text-field range) also maps to a 400.
+       round-trip). A QueryError is routed by its Diagnostic's Cause
+       (_map_emit_error): a construct that parses but can't execute against
+       tantivy (e.g. a text-field range) is a 400, a registry/schema
+       mismatch is logged and a 400, and an INTERNAL defect is re-raised.
     4. Optional fuzzy blend (ADVANCED_FUZZY_SEARCH_THRESHOLD) builds a
        plain word string from the parsed AST's free-text tokens
        (whoosh_compat.free_text_tokens) and feeds THAT to
@@ -346,12 +380,7 @@ def parse_user_query(
     try:
         exact = tantivy_emit(result.ast, index=index, registry=registry)
     except QueryError as e:
-        # emit()'s documented host contract: every reachable-from-query-text
-        # kind here (TEXT_RANGE, PATTERN_TOO_COMPLEX, EXISTS_REQUIRES_FAST)
-        # is a user-input error, exactly like a parse diagnostic, and maps
-        # to a 400. The AST_*/BACKEND_REJECTED backstop kinds cannot occur
-        # here: whoosh-compat only ever hands us the AST it parsed itself.
-        raise SearchQueryError(_user_facing_emit_message(e.diagnostic)) from e
+        raise _map_emit_error(e) from e
 
     cjk_query = (
         _build_cjk_query(index, raw_query, _CJK_ALL_FIELDS)
@@ -377,6 +406,18 @@ def parse_user_query(
     return _any_of(clauses)
 
 
+# The three whoosh-compat kinds for a wildcard on a field that cannot
+# carry one. d.field_kind supplies the discriminator, so naming the field's
+# type needs no second trip through the registry.
+_PATTERN_ON_KINDS: Final = frozenset(
+    {
+        DiagnosticKind.PATTERN_ON_NUMERIC,
+        DiagnosticKind.PATTERN_ON_BOOLEAN_EXISTS,
+        DiagnosticKind.PATTERN_ON_SUBPATH,
+    },
+)
+
+
 def _diagnostics_to_error(diagnostics: tuple[Diagnostic, ...]) -> SearchQueryError:
     errors = [_single_diagnostic_to_error(d) for d in diagnostics]
     return errors[0] if len(errors) == 1 else MultipleSearchQueryErrors(errors)
@@ -390,11 +431,16 @@ def _single_diagnostic_to_error(d: Diagnostic) -> SearchQueryError:
         return InvalidDateQuery(field_name, d.raw_value)
     if d.kind is DiagnosticKind.BAD_NUMBER:
         return InvalidNumberQuery(field_name, d.raw_value)
-    # TOO_DEEP and UNSUPPORTED_PATTERN (e.g. a wildcard on asn/page_count/
-    # num_notes, or on a custom_fields.*/notes.* subpath) fall through to
-    # the generic message; consider whether either warrants its own typed
-    # subclass if callers ever need to distinguish them programmatically.
-    return SearchQueryError(d.message)
+    if d.kind is DiagnosticKind.TOO_DEEP:
+        return SearchQueryError("The search query is nested too deeply.")
+    if d.kind in _PATTERN_ON_KINDS:
+        kind_label = f" ({d.field_kind.name.lower()})" if d.field_kind else ""
+        return SearchQueryError(
+            f"Wildcard patterns are not supported for field "
+            f"{field_name!r}{kind_label}.",
+        )
+    logger.warning("Unmapped parse diagnostic %s: %s", d.kind, d.message)
+    return SearchQueryError("The search query could not be executed.")
 
 
 def parse_simple_query(

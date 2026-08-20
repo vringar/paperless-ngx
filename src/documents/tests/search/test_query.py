@@ -313,46 +313,20 @@ class TestSearchQueryErrors:
 
 
 class TestEmitErrorContract:
-    """A diagnostics list, or a QueryError from emit(), are both user-input
-    errors and must surface as SearchQueryError (HTTP 400)."""
+    """A QueryError from emit() surfaces as a SearchQueryError (HTTP 400).
 
-    def test_query_emit_error_maps_to_search_query_error(
-        self,
-        query_index: tantivy.Index,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from whoosh_compat.errors import Cause
-        from whoosh_compat.errors import Diagnostic
-        from whoosh_compat.errors import DiagnosticKind
-        from whoosh_compat.errors import QueryError
-
-        import documents.search._query as query_mod
-
-        def raise_emit_error(*args: object, **kwargs: object) -> None:
-            raise QueryError(
-                Diagnostic(
-                    kind=DiagnosticKind.TEXT_RANGE,
-                    cause=Cause.UNSUPPORTED,
-                    message="synthetic emit failure",
-                ),
-            )
-
-        monkeypatch.setattr(query_mod, "tantivy_emit", raise_emit_error)
-        with pytest.raises(SearchQueryError):
-            parse_user_query(query_index, "invoice", UTC)
+    The Cause-based routing table itself is covered in test_error_routing.py.
+    """
 
     def test_exists_requires_fast_gets_the_user_facing_rewrite(
         self,
         query_index: tantivy.Index,
     ) -> None:
-        # The only emit-time diagnostic kind paperless rewrites itself
-        # (_user_facing_emit_message): whoosh-compat's own message advises
-        # a host-side fast=True config change, which the user can't act
-        # on, so this checks OUR rewrite, not whoosh-compat's wording
-        # (that's whoosh-compat's own tests/emitter/test_kind_matrix.py's
-        # job now).
+        # whoosh-compat's own message advises a host-side fast=True config
+        # change the user can't act on, so this checks OUR wording, not
+        # whoosh-compat's (that's its own test suite's job now).
         with pytest.raises(SearchQueryError) as exc_info:
             parse_user_query(query_index, "notes.user:*", UTC)
         assert str(exc_info.value) == (
-            "existence searches (field:*) are not supported for this field"
+            "Existence searches (field:*) are not supported for field 'notes.user'."
         )
