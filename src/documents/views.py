@@ -2416,8 +2416,6 @@ class UnifiedSearchViewSet(DocumentViewSet):
         if not self._is_search_request():
             return super().list(request)
 
-        from whoosh_compat.errors import QueryParserError
-
         from documents.search import SearchHit
         from documents.search import SearchQueryError
         from documents.search import TantivyBackend
@@ -2618,16 +2616,6 @@ class UnifiedSearchViewSet(DocumentViewSet):
             # surface every offending field's message, not just the first,
             # so the user can fix them all in one round-trip.
             raise ValidationError({"query": search_query_error_messages(e)}) from e
-        except QueryParserError:
-            # A whoosh-compat parser BUG (its own contract: not user-fixable
-            # input). Let it surface as a 500 monitoring can see instead of
-            # a 400 blaming the user for a library defect.
-            raise
-        except Exception as e:
-            logger.warning(f"An error occurred listing search results: {e!s}")
-            return HttpResponseBadRequest(
-                "Error listing search results, check logs for more detail.",
-            )
 
     @action(detail=False, methods=["GET"], name="Get Next ASN")
     def next_asn(self, request, *args, **kwargs):
