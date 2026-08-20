@@ -20,6 +20,8 @@ from documents.search._tokenizer import paperless_text_analyzer
 from documents.search._tokenizer import stem_pattern_text
 
 if TYPE_CHECKING:
+    from whoosh_compat import PatternNormalizer
+
     from documents.search._backend import TantivyBackend
 
 pytestmark = [pytest.mark.search, pytest.mark.django_db]
@@ -82,9 +84,10 @@ class TestPrefixStemming:
         indexed_doc: Document,
         query: str,
     ) -> None:
-        """A partial prefix keeps matching: "librar" stems to "librari", which
-        is longer than what was typed, so the typed run is kept. Using the
-        shorter of the two widens recall rather than failing closed."""
+        """A partial prefix keeps matching. "librar" stems to "librari", which
+        is longer than what was typed and so matches no term on its own, but
+        the run is offered as typed alongside its stem and that form reaches
+        "librari" in the index."""
         assert _matched_ids(backend, query) == {indexed_doc.id}
 
     def test_pattern_past_the_stem_boundary_is_documented_not_fixed(
@@ -97,20 +100,17 @@ class TestPrefixStemming:
         is deliberate, not accidental."""
         assert _matched_ids(backend, "produ*name") == set()
 
-    def test_stem_substitution_loses_compounds_accepted_trade(
+    def test_stem_substitution_reaches_both_the_inflection_and_the_compound(
         self,
         backend: TantivyBackend,
         indexed_doc: Document,
     ) -> None:
         """English stemming substitutes as well as truncates: "copy" and
         "copies" both index as "copi", while "copyright" keeps its literal "y".
-        So "copy*" reaches the base word and its inflections but no longer
-        reaches the compound, which it did before patterns were stemmed. That
-        trade is deliberate: the same substitution is what makes "company*" and
-        "library*" work at all, and no rule over one normalized string tells the
-        two apart. Matching both would need the pattern to be emitted as a
-        disjunction of the folded and stemmed forms, which belongs in the
-        emitter, not here.
+        Neither form is a prefix of the other, so no single normalized string
+        reaches both. The run is therefore emitted as a disjunction of the
+        folded and stemmed forms, and "copy*" reaches the base word, its
+        inflections and the compound alike.
         """
         compound = Document.objects.create(
             title="Copyright notice",
@@ -120,7 +120,7 @@ class TestPrefixStemming:
         )
         backend.add_or_update(compound)
 
-        assert _matched_ids(backend, "copy*") == {indexed_doc.id}
+        assert _matched_ids(backend, "copy*") == {indexed_doc.id, compound.id}
         assert _matched_ids(backend, "copyright*") == {compound.id}
 
 
@@ -143,34 +143,67 @@ class TestStemsMatchTheIndexAnalyzer:
         assert stem_pattern_text(ascii_fold(word.lower()), language) == indexed
 
 
+def _forms(normalize: PatternNormalizer, text: str) -> tuple[str, ...]:
+    """The distinct forms a term may match, in order, the way the emitter reads
+    the normalizer's answer (see whoosh_compat.PatternNormalizer)."""
+    result = normalize(text)
+    if isinstance(result, str):
+        return (result,)
+    return tuple(dict.fromkeys(result))
+
+
 class TestPatternNormalizer:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            ("Invoice", "invoic"),
-            ("companies", "compani"),
-            # y -> i: same length as typed, and the index only holds the stem
-            ("library", "librari"),
-            ("invoic", "invoic"),
-            ("Universit", "universit"),
-            ("Café", "cafe"),
+            ("Invoice", ("invoice", "invoic")),
+            ("companies", ("companies", "compani")),
+            # y -> i is a substitution, so both forms are needed: the index
+            # holds "librari" for "library" and "library" for "librarian".
+            ("library", ("library", "librari")),
+            # A run the stemmer leaves alone collapses back to one form, so it
+            # costs exactly the one regex branch it did before.
+            ("invoic", ("invoic",)),
+            ("Universit", ("universit",)),
+            ("Café", ("cafe",)),
         ],
     )
-    def test_shorter_of_the_typed_run_and_its_stem(
+    def test_offers_the_typed_run_and_its_stem(
         self,
         text: str,
-        expected: str,
+        expected: tuple[str, ...],
     ) -> None:
-        assert _make_pattern_normalizer("en")(text) == expected
+        assert _forms(_make_pattern_normalizer("en"), text) == expected
 
     def test_run_that_yields_no_token_falls_back_to_the_typed_run(self) -> None:
         """A run past the remove_long limit analyzes to zero tokens, so there is
-        no stem to substitute and the folded run is used as typed."""
+        no stem to offer and only the folded run remains."""
         over_long = "invoices" * 20
-        assert _make_pattern_normalizer("en")(over_long) == over_long
+        assert _forms(_make_pattern_normalizer("en"), over_long) == (over_long,)
 
     @pytest.mark.parametrize("language", [None, "klingon"])
     def test_unstemmed_language_folds_only(self, language: str | None) -> None:
         """With no stemmer configured, or one this build has no stemmer for, the
         index holds surface forms and the pattern must keep them too."""
-        assert _make_pattern_normalizer(language)("Invoices") == "invoices"
+        assert _forms(_make_pattern_normalizer(language), "Invoices") == ("invoices",)
+
+    @pytest.mark.parametrize("char", ["a", "Z", "é"])
+    def test_a_single_character_collapses_to_one_folded_form(self, char: str) -> None:
+        """A bracket class body is normalized one character at a time and the
+        answer is used only when it is a single one-character form, so a
+        stemmer that changed a lone character would silently disable folding
+        inside classes."""
+        forms = _forms(_make_pattern_normalizer("en"), char)
+        assert len(forms) == 1
+        assert len(forms[0]) == 1
+
+
+class TestBracketClassStillFolds:
+    def test_class_body_matches_case_insensitively(
+        self,
+        backend: TantivyBackend,
+        indexed_doc: Document,
+    ) -> None:
+        """The class body is folded per character, which the alternatives
+        contract preserves only because a lone character stems to itself."""
+        assert _matched_ids(backend, "title:[IP]nvoice*") == {indexed_doc.id}

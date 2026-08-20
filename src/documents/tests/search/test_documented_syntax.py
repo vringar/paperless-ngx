@@ -4,8 +4,9 @@ Every query here appears verbatim, or as a direct paraphrase, in the
 "Document searches" section of ``docs/usage.md``. Each case indexes real
 documents and asserts on matched document IDs rather than on the parsed
 query, because a query that parses cleanly is not necessarily a query that
-means what the documentation says it means: ``added:now - 3 days`` parses
-without a single diagnostic and then matches nothing.
+means what the documentation says it means: ``added:now`` parses without a
+single diagnostic and then matches nothing, because it resolves to an
+instant rather than to a span.
 
 The negative cases matter as much as the positive ones. They pin the
 behaviours the docs explicitly warn about, so that if any of them ever
@@ -25,6 +26,7 @@ import time_machine
 from documents.models import Document
 from documents.models import Note
 from documents.models import Tag
+from documents.search._errors import InvalidDateQuery
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -239,6 +241,9 @@ class TestDocumentedDateForms:
             # spelling is pinned as a non-match below.
             ('added:"2005-03-04T15:30:00Z"', "old"),
             ("added:[2005-03-04T09:00:00Z to 2005-03-04T17:00:00Z]", "old"),
+            # A quoted range bound works when the quotes are single ones; the
+            # double-quoted spelling is pinned as an error below.
+            ("added:['2005-03-04' to 2005-03-05]", "old"),
         ],
     )
     def test_documented_date_form_matches_its_day_or_month(
@@ -264,15 +269,6 @@ class TestDocumentedDateForms:
             # of the resulting range, not the way the value is delimited.
             'added:"now"',
             'added:"midnight"',
-            'added:"-3 days"',
-            'added:"-1 week"',
-            # The trap: this reports no diagnostics but parses as
-            # And(added:now, "3", "days") - added:now plus stray text.
-            "added:now - 3 days",
-            # The bare, unquoted spelling of a full timestamp. The quoted and
-            # range-bound spellings above do work and match this fixture's
-            # document; only this one silently degrades to a non-match.
-            "added:2005-03-04T15:30:00Z",
         ],
     )
     def test_forms_the_docs_warn_about_match_nothing(
@@ -282,3 +278,36 @@ class TestDocumentedDateForms:
         query: str,
     ) -> None:
         assert _matched_ids(backend, query) == set()
+
+    def test_bare_timestamp_is_rejected_rather_than_matching_nothing(
+        self,
+        backend: TantivyBackend,
+        dated: dict[str, int],
+    ) -> None:
+        """The bare, unquoted spelling of a full timestamp. The quoted and
+        range-bound spellings pinned above do work and match this fixture's
+        document; this one is a user-fixable error rather than an empty
+        result set, so the docs tell the user to quote it.
+
+        The reported value is the prefix the date grammar could consume, not
+        the whole of what the user typed: paperless's own message, not this
+        value, is what has to carry the "quote it" guidance.
+        """
+        with pytest.raises(InvalidDateQuery) as exc_info:
+            _matched_ids(backend, "added:2005-03-04T15:30:00Z")
+        assert exc_info.value.field == "added"
+        assert exc_info.value.value == "2005-03-"
+
+    def test_double_quoted_range_bound_is_rejected(
+        self,
+        backend: TantivyBackend,
+        dated: dict[str, int],
+    ) -> None:
+        """Quoting a range bound is allowed, but only with single quotes: the
+        double-quoted spelling reaches the date grammar with its quotes still
+        attached and is not a recognizable date. The docs say so, so pin which
+        of the two quote characters is the one that fails.
+        """
+        with pytest.raises(InvalidDateQuery) as exc_info:
+            _matched_ids(backend, 'added:["2005-03-04" to 2005-03-05]')
+        assert exc_info.value.value == '"2005-03-04"'

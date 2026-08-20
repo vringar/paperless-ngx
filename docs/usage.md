@@ -933,7 +933,7 @@ original_filename:invoice.pdf
 - `asn` matches a document's Archive Serial Number.
 - `page_count` matches a document's page count.
 - `num_notes` matches how many notes a document has.
-- `checksum` matches the checksum of the original document file (not the archived/processed version). Unlike the text fields, this one is stored verbatim rather than tokenized, so only a complete, lowercase checksum matches. To search by the first few characters instead, use a wildcard: `checksum:9f86d081*`. Wildcard patterns on the text fields are stemmed to line up with the stemmed index, but `checksum` is indexed without stemming, so its patterns are not stemmed either and the prefix is matched exactly as typed.
+- `checksum` matches the checksum of the original document file (not the archived/processed version). Unlike the text fields, this one is stored verbatim rather than tokenized, so only a complete, lowercase checksum matches. To search by the first few characters instead, use a wildcard: `checksum:9f86d081*`. Wildcard patterns on the text fields are also tried stemmed, to line up with the stemmed index, but `checksum` is indexed without stemming, so its patterns are matched exactly as typed and nothing else.
 - `original_filename` matches the filename of the document as originally consumed.
 
 `asn`, `page_count` and `num_notes` are numeric and also accept ranges, for example `asn:[50 to 150]`.
@@ -946,12 +946,16 @@ title:Invoice*
 ```
 
 Wildcards are matched against the _stemmed_ terms stored in the index, not
-against the words as they appear in the document. A trailing `*` matches a word
-and its inflections (`invoice*` finds "invoice", "invoices" and "invoiced"),
-but not every longer word that starts with the same letters: `copy*` finds
-"copy" and "copies", not "copyright". For the same reason, a pattern whose text
-continues past where stemming cuts a word off cannot match at all:
-`productname` is indexed as `productnam`, so `produ*name` finds nothing.
+against the words as they appear in the document. Each literal part of a
+pattern is tried both as you typed it and in its stemmed form, so a trailing
+`*` matches a word and its inflections (`invoice*` finds "invoice", "invoices"
+and "invoiced") as well as longer words whose stored term still begins with
+what you typed (`copy*` finds "copyright" alongside "copy" and "copies").
+
+It is still not a plain prefix search over the original text: where stemming
+shortens a word, a pattern that reaches past the point it was cut off matches
+nothing. `productname` is stored as `productnam`, so `produ*name` finds
+nothing, and "happiness" is stored as `happi`, so `happine*` does not find it.
 
 Matching natural date keywords:
 
@@ -990,8 +994,8 @@ added:[2005-06-15T09:00:00Z to 2005-06-15T17:00:00Z]
 - An ISO date such as `2005-03-04` covers that whole day, and `2005-01` covers that whole month.
 - A month name such as `january` covers that whole month in the current year.
 - `next <weekday>` and `last <weekday>` each cover that whole day and must be quoted. A bare weekday name such as `monday` is not accepted.
-- A full timestamp such as `2005-01-01T00:00:00Z` matches that exact instant. Like the other expressions above, it has to be quoted when it stands on its own: `added:"2005-01-01T00:00:00Z"`.
-- A range takes two of the above as its bounds, for example `created:[2005 to 2009]` or `added:[2005-01-01 to 2005-01-31]`. Bounds may carry a time of day, and inside the brackets they are written without quotes.
+- A full timestamp such as `2005-01-01T00:00:00Z` matches that exact instant. Like the other expressions above, it has to be quoted when it stands on its own: `added:"2005-01-01T00:00:00Z"`. The unquoted spelling is rejected with an error rather than searched, because only part of it can be read as a date.
+- A range takes two of the above as its bounds, for example `created:[2005 to 2009]` or `added:[2005-01-01 to 2005-01-31]`. Bounds may carry a time of day. A bound is normally written without quotes; if you do quote one, use single quotes (`added:['-1 week' to now]`), because a double-quoted bound is rejected with an error.
 
 !!! warning
 

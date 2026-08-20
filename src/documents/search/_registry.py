@@ -12,7 +12,7 @@ from documents.search._tokenizer import paperless_text_analyzer
 from documents.search._tokenizer import stem_pattern_text
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from whoosh_compat import PatternNormalizer
 
 _registry_cache: dict[str | None, FieldRegistry] = {}
 
@@ -27,29 +27,35 @@ def _fold_normalizer(text: str) -> str:
     return ascii_fold(text.lower())
 
 
-def _make_pattern_normalizer(language: str | None) -> Callable[[str], str]:
+def _make_pattern_normalizer(language: str | None) -> PatternNormalizer:
     """Build the wildcard/regex literal-run normalizer for a search language."""
 
-    def _pattern_normalizer(text: str) -> str:
-        """Normalize a literal run so it can match indexed terms.
+    def _pattern_normalizer(text: str) -> tuple[str, ...]:
+        """Normalize a literal run into the forms a term may match.
 
         TEXT index terms go through lowercase -> ascii_fold -> stem, so a
         pattern that skips stemming can never match one: "invoice*" would look
         for a term starting with "invoice" while the index holds "invoic". The
-        run is therefore stemmed here too. KEYWORD fields are indexed raw and
-        get _fold_normalizer instead, so their patterns stay literal.
+        run is therefore offered stemmed as well. KEYWORD fields are indexed
+        raw and get _fold_normalizer instead, so their patterns stay literal.
 
-        A stem can be longer than the fragment the user typed, though, and a
-        longer prefix matches nothing, so the stem is used only when it is no
-        longer than the typed run. Length is a proxy for "the stem stayed close
-        to what was typed", not a guarantee of wider recall: a stem that
-        substitutes rather than truncates ("copy" -> "copi") moves the pattern
-        sideways instead of widening it, so "copy*" gains "copies" and loses
-        "copyright". test_pattern_stemming.py pins that trade.
+        Both forms are returned, as alternatives, because neither is a prefix
+        of the other in general: English stemming substitutes as well as
+        truncates ("copy" -> "copi"), so the stem alone loses the compounds
+        the typed run reaches ("copyright") while the typed run alone loses
+        the inflections the stem reaches ("copies"). whoosh-compat ORs the
+        alternatives per literal run and deduplicates them, so a run the
+        stemmer leaves alone costs exactly the one branch it did before.
+
+        Inside a bracket class the emitter calls this once per character and
+        uses the answer only if it is a single one-character form; two forms
+        there leave the character as typed. A stemmer does not change a lone
+        character, so the two forms deduplicate to one and the class body is
+        folded as before.
         """
         folded = ascii_fold(text.lower())
         stemmed = stem_pattern_text(folded, language)
-        return folded if len(stemmed) > len(folded) else stemmed
+        return (folded, stemmed)
 
     return _pattern_normalizer
 

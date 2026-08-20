@@ -1,26 +1,23 @@
-"""Reversed date ranges: an internal inconsistency between relative and
-absolute bounds, pinned exactly as measured rather than "fixed" here.
+"""Reversed date ranges swap their bounds back into order.
 
 Measured end to end (FROZEN_NOW = 2026-06-15T12:00:00Z):
 
     added:[now-1h to now+1h]          -> 2h window, correct order
-    added:[now+1h to now-1h]          -> ~22h window, DAY-BUMPED, not swapped
+    added:[now+1h to now-1h]          -> the same 2h window, SWAPPED
     added:[2020-01-01 to 2019-01-01]  -> 366 days, SWAPPED to the forward order
     added:[2019-01-01 to 2020-01-01]  -> 366 days (same result either way)
 
-Absolute reversed ranges swap their bounds back into order, matching
-whoosh's own behavior. Relative (``now±``) reversed ranges do not swap --
-whoosh-compat's date grammar instead adds a day to the upper bound,
-producing a much wider window than either the forward or a swapped
-reading would give. This is a library-level inconsistency between the two
-range kinds, not an application-level rewrite paperless performs (there is
-no reversed-range handling in documents/search/_query.py), so it is not
-"fixed" here: fixing it belongs in whoosh-compat's date grammar, not in a
-pre-parse rewrite on this side (see also the CJK/pre-parse-rewrites
-docstrings elsewhere in this suite for the same discipline). Pinned as a
-known inconsistency and a library follow-up. When whoosh-compat's date
-grammar is fixed to swap consistently, the relative case's test below
-inverts -- that inversion is the intended, visible signal.
+Both range kinds behave the same way, matching whoosh's own behavior.
+Relative (``now±``) reversed ranges used to differ: whoosh-compat's date
+grammar added a day to the upper bound instead of swapping, producing a
+much wider window than either the forward or a swapped reading gives. That
+was a library-level inconsistency between the two range kinds, not an
+application-level rewrite paperless performs (there is still no
+reversed-range handling in documents/search/_query.py), and it was fixed in
+whoosh-compat's date grammar rather than in a pre-parse rewrite on this
+side (see also the CJK/pre-parse-rewrites docstrings elsewhere in this
+suite for the same discipline). Both cases are pinned below so a future
+divergence between them is visible again.
 """
 
 from __future__ import annotations
@@ -52,13 +49,13 @@ def _index(backend: TantivyBackend, **kwargs: object) -> Document:
     return doc
 
 
-class TestRelativeReversedRangeDayBumpsInsteadOfSwapping:
+class TestRelativeReversedRangeSwaps:
     @pytest.fixture
     def docs(self, backend: TantivyBackend) -> dict[str, int]:
         with time_machine.travel(FROZEN_NOW, tick=False):
             return {
-                # Inside the correct (forward) 2h window [11:00, 13:00],
-                # outside the day-bumped window [13:00, next-day 11:00).
+                # Inside the 2h window [11:00, 13:00] that both the forward
+                # and the reversed spelling resolve to.
                 "in_forward_window": _index(
                     backend,
                     title="Forward window doc",
@@ -66,13 +63,14 @@ class TestRelativeReversedRangeDayBumpsInsteadOfSwapping:
                     checksum="reversed-relative-forward",
                     added=FROZEN_NOW,
                 ).pk,
-                # Outside the correct 2h window, inside the day-bumped
-                # window the reversed query actually produces.
-                "in_daybumped_window": _index(
+                # Outside that window, but inside the wider window the
+                # reversed spelling produced when it day-bumped instead of
+                # swapping. It must not match either query now.
+                "outside_the_window": _index(
                     backend,
-                    title="Day-bumped window doc",
+                    title="Later same-week doc",
                     content="x",
-                    checksum="reversed-relative-daybumped",
+                    checksum="reversed-relative-outside",
                     added=datetime(2026, 6, 16, 8, 0, tzinfo=UTC),
                 ).pk,
             }
@@ -87,18 +85,16 @@ class TestRelativeReversedRangeDayBumpsInsteadOfSwapping:
                 docs["in_forward_window"],
             }
 
-    def test_reversed_range_day_bumps_rather_than_swapping(
+    def test_reversed_range_swaps_to_the_same_window(
         self,
         backend: TantivyBackend,
         docs: dict[str, int],
     ) -> None:
-        # If this swapped like the absolute case below, it would match
-        # "in_forward_window" (the same set as the forward query). It
-        # instead matches only the day-bumped document -- the documented
-        # library inconsistency.
+        # The same set as the forward query, and in particular not the
+        # document that only a day-bumped upper bound would have reached.
         with time_machine.travel(FROZEN_NOW, tick=False):
             assert _matched_ids(backend, "added:[now+1h to now-1h]") == {
-                docs["in_daybumped_window"],
+                docs["in_forward_window"],
             }
 
 

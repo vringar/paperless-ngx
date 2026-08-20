@@ -17,9 +17,8 @@ from documents.models import Document
 from documents.search._registry import get_field_registry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from whoosh_compat import FieldRegistry
+    from whoosh_compat import PatternNormalizer
 
     from documents.search._backend import TantivyBackend
 
@@ -29,7 +28,7 @@ CEDEF00D = "cedef00ddeadbeef0123456789abcdef01234567"
 CEDEDEAD = "cededeadbeef567801234567" + "89abcdef01234567"
 
 
-def _normalizer(registry: FieldRegistry, name: str) -> Callable[[str], str]:
+def _normalizer(registry: FieldRegistry, name: str) -> PatternNormalizer:
     ref = registry.make_ref(name)
     assert ref is not None
     resolved = registry.resolve(ref)
@@ -48,12 +47,17 @@ class TestKeywordPatternNormalizer:
         ],
     )
     def test_keyword_runs_are_folded_not_stemmed(self, run: str) -> None:
+        """One form, the run as typed: a KEYWORD pattern must never be widened
+        to a stem, which would return checksums that do not start with what
+        the user typed."""
         normalize = _normalizer(get_field_registry("en"), "checksum")
         assert normalize(run) == run
 
-    def test_text_runs_are_still_stemmed(self) -> None:
+    def test_text_runs_still_offer_their_stem(self) -> None:
+        """A TEXT field offers the stem alongside the typed run, so a term
+        matching either one is reachable."""
         normalize = _normalizer(get_field_registry("en"), "title")
-        assert normalize("Running") == "run"
+        assert tuple(normalize("Running")) == ("running", "run")
 
 
 class TestChecksumPrefixQueries:

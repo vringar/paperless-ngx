@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import pytest
 from whoosh_compat import FieldKind
 from whoosh_compat import FieldRegistry
@@ -18,6 +20,15 @@ def _resolve(registry: FieldRegistry, name: str) -> ResolvedField:
     resolved = registry.resolve(ref)
     assert resolved is not None, f"{name} did not resolve"
     return resolved
+
+
+def _distinct_forms(result: str | Sequence[str]) -> tuple[str, ...]:
+    """The forms a term may match, in order, the way whoosh-compat's emitter
+    reads a pattern_normalizer's answer: a bare str is one form, a sequence is
+    several, deduplicated."""
+    if isinstance(result, str):
+        return (result,)
+    return tuple(dict.fromkeys(result))
 
 
 class TestFieldRegistry:
@@ -103,16 +114,22 @@ class TestFieldRegistry:
         self,
         registry: FieldRegistry,
     ) -> None:
-        # Index terms are stemmed, so patterns are too, using the registry's
-        # own language: "Running" has to reach the indexed "run". Without a
-        # language the index holds surface forms, so it only case/accent-folds.
+        # Index terms are stemmed, so patterns offer their stem too, using the
+        # registry's own language: "Running" has to reach the indexed "run".
+        # Without a language the index holds surface forms, so there is no
+        # second form and the run is only case/accent-folded.
         resolved = _resolve(registry, "title")
         assert resolved.spec.pattern_normalizer is not None
-        assert resolved.spec.pattern_normalizer("Running") == "running"
+        assert _distinct_forms(resolved.spec.pattern_normalizer("Running")) == (
+            "running",
+        )
 
         resolved_en = _resolve(get_field_registry("en"), "title")
         assert resolved_en.spec.pattern_normalizer is not None
-        assert resolved_en.spec.pattern_normalizer("Running") == "run"
+        assert _distinct_forms(resolved_en.spec.pattern_normalizer("Running")) == (
+            "running",
+            "run",
+        )
 
     def test_registry_is_cached_per_language(self) -> None:
         a = get_field_registry("en")
