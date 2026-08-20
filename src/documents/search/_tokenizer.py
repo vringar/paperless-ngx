@@ -131,11 +131,14 @@ def stem_pattern_text(text: str, language: str | None) -> str:
     """Stem an already lowercased/ascii-folded run the way index terms are.
 
     Returns text unchanged when stemming is disabled for language, and also
-    when the stem step does not yield exactly one token: remove_long drops an
-    over-long run entirely, and there is no single stem to substitute for a run
-    that analyzes to several. Falling back to the text as typed is the safe
-    direction for a pattern prefix, since it can only be as narrow as it was
-    before stemming was considered.
+    when the stem step does not yield exactly one token: remove_long drops a run
+    past the length limit, leaving no stem to substitute. Falling back to the
+    text as typed is the safe direction for a pattern prefix, since it can only
+    be as narrow as it was before stemming was considered.
+
+    The raw tokenizer emits one token whatever the input and the stemmer is
+    1-to-1, so only the zero-token case can fire today; the guard covers both
+    counts so a tokenizer change cannot turn this into an IndexError.
     """
     analyzer = _pattern_stemmer(language)
     if analyzer is None:

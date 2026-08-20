@@ -927,10 +927,12 @@ title:Invoice*
 ```
 
 Wildcards are matched against the _stemmed_ terms stored in the index, not
-against the words as they appear in the document. A trailing `*` therefore
-works as expected (`invoice*` finds "invoice", "invoices" and "invoiced"), but
-a pattern whose text continues past where stemming cuts a word off cannot
-match: `productname` is indexed as `productnam`, so `produ*name` finds nothing.
+against the words as they appear in the document. A trailing `*` matches a word
+and its inflections (`invoice*` finds "invoice", "invoices" and "invoiced"),
+but not every longer word that starts with the same letters: `copy*` finds
+"copy" and "copies", not "copyright". For the same reason, a pattern whose text
+continues past where stemming cuts a word off cannot match at all:
+`productname` is indexed as `productnam`, so `produ*name` finds nothing.
 
 Matching natural date keywords:
 

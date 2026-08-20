@@ -15,6 +15,9 @@ import pytest
 
 from documents.models import Document
 from documents.search._registry import _make_pattern_normalizer
+from documents.search._tokenizer import ascii_fold
+from documents.search._tokenizer import paperless_text_analyzer
+from documents.search._tokenizer import stem_pattern_text
 
 if TYPE_CHECKING:
     from documents.search._backend import TantivyBackend
@@ -23,7 +26,7 @@ pytestmark = [pytest.mark.search, pytest.mark.django_db]
 
 CONTENT = (
     "invoice total due for electricity from both companies, "
-    "payments made to the university library"
+    "payments made to the university library, copies attached"
 )
 
 
@@ -93,6 +96,51 @@ class TestPrefixStemming:
         "productnam"); usage.md must not advertise it. Pinned so the limitation
         is deliberate, not accidental."""
         assert _matched_ids(backend, "produ*name") == set()
+
+    def test_stem_substitution_loses_compounds_accepted_trade(
+        self,
+        backend: TantivyBackend,
+        indexed_doc: Document,
+    ) -> None:
+        """English stemming substitutes as well as truncates: "copy" and
+        "copies" both index as "copi", while "copyright" keeps its literal "y".
+        So "copy*" reaches the base word and its inflections but no longer
+        reaches the compound, which it did before patterns were stemmed. That
+        trade is deliberate: the same substitution is what makes "company*" and
+        "library*" work at all, and no rule over one normalized string tells the
+        two apart. Matching both would need the pattern to be emitted as a
+        disjunction of the folded and stemmed forms, which belongs in the
+        emitter, not here.
+        """
+        compound = Document.objects.create(
+            title="Copyright notice",
+            content="copyright notice for the work",
+            checksum="pattern-stemming-2",
+            archive_serial_number=901,
+        )
+        backend.add_or_update(compound)
+
+        assert _matched_ids(backend, "copy*") == {indexed_doc.id}
+        assert _matched_ids(backend, "copyright*") == {compound.id}
+
+
+class TestStemsMatchTheIndexAnalyzer:
+    """stem_pattern_text rebuilds paperless_text_analyzer's stemming tail rather
+    than sharing it, so a filter added to the index analyzer alone would silently
+    stop patterns from reaching the terms it produces.
+    """
+
+    @pytest.mark.parametrize(
+        "language",
+        ["en", "de", "fr", "es", "sv", None, "klingon"],
+    )
+    @pytest.mark.parametrize(
+        "word",
+        ["Copies", "copyright", "Companies", "Invoices", "laufen", "casas", "Straße"],
+    )
+    def test_stem_equals_the_index_term(self, word: str, language: str | None) -> None:
+        indexed = paperless_text_analyzer(language).analyze(word)[0]
+        assert stem_pattern_text(ascii_fold(word.lower()), language) == indexed
 
 
 class TestPatternNormalizer:
