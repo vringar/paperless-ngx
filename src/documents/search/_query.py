@@ -133,6 +133,35 @@ def _user_facing_emit_message(d: Diagnostic) -> str:
     return "The search query could not be executed."
 
 
+# MISCONFIGURED reports a static configuration fact (the registry declares a
+# field the schema does not carry, or one that is not fast), so it stays true
+# until an operator changes the schema and reindexes. The operator-facing log
+# therefore fires once per (kind, field) per process: an alert that repeats on
+# every user query is one operators learn to filter out. A restart re-logs,
+# which re-surfaces the condition after a config change.
+#
+# Bounded by the registry, not by query text: emit() only reports MISCONFIGURED
+# for a field it resolved, and FieldRegistry.resolve returns None for any name
+# or JSON subpath the registry does not declare (those become AST_UNKNOWN_FIELD,
+# an INTERNAL cause that never reaches here), so a user cannot grow this set.
+_logged_misconfigurations: set[tuple[DiagnosticKind, str]] = set()
+
+
+def _log_misconfiguration_once(d: Diagnostic) -> None:
+    """Log a registry/schema mismatch the first time this process sees it for
+    a given field. Never gates the 400: every request still gets its answer."""
+    key = (d.kind, str(d.field))
+    if key in _logged_misconfigurations:
+        return
+    _logged_misconfigurations.add(key)
+    logger.error(
+        "Search index misconfiguration for field %s (%s): %s",
+        d.field,
+        d.kind.name,
+        d.message,
+    )
+
+
 def _map_emit_error(e: QueryError) -> SearchQueryError:
     """Route an emit-time QueryError by its Diagnostic's Cause.
 
@@ -142,19 +171,15 @@ def _map_emit_error(e: QueryError) -> SearchQueryError:
     re-raised to surface the same way views.py already lets QueryParserError
     surface. MISCONFIGURED is deliberately both: the registry and the index
     schema disagree, which only an operator can fix, so it is logged as an
-    error, but a request is still waiting and the query cannot run either
-    way, so it also returns a 400.
+    error (once per field per process, see _log_misconfiguration_once), but a
+    request is still waiting and the query cannot run either way, so it also
+    returns a 400.
     """
     d = e.diagnostic
     if d.cause is Cause.INTERNAL:
         raise e
     if d.cause is Cause.MISCONFIGURED:
-        logger.error(
-            "Search index misconfiguration for field %s (%s): %s",
-            d.field,
-            d.kind.name,
-            d.message,
-        )
+        _log_misconfiguration_once(d)
     return SearchQueryError(_user_facing_emit_message(d))
 
 
