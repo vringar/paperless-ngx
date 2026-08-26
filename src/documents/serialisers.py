@@ -775,14 +775,9 @@ class _BatchingManyRelatedField(serializers.ManyRelatedField):
         item_pks = [(item, self._normalize_pk(item)) for item in data]
         candidate_pks = {pk for _, pk in item_pks if pk is not None}
 
-        # Django's IntegerFieldOverflow guard (-> EmptyResultSet, i.e. no
-        # match) only covers exact/gt/gte/lt/lte lookups, not `in` -- an
-        # out-of-range int in `pk__in=` reaches the DB driver as-is and
-        # raises OverflowError (SQLite) / DataError (Postgres) instead of
-        # cleanly matching nothing. The per-item `exact`-lookup fallback
-        # below IS covered, so on that failure just skip the batch and let
-        # every item resolve individually -- each still costs one query,
-        # but reports the normal validation error instead of a raw 500.
+        # Django's overflow guard covers exact/gt/gte/lt/lte, not `in` -- an
+        # out-of-range pk in `pk__in=` can hit the driver raw (OverflowError
+        # on SQLite). Fall back to per-item resolution, which is guarded.
         try:
             resolved_by_pk = {
                 obj.pk: obj

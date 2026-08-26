@@ -331,6 +331,84 @@ class TestDocumentApi(DirectoriesMixin, ConsumeTaskMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_document_update_tags_rejects_boolean_id(self) -> None:
+        """
+        GIVEN:
+            - A document is being updated with a boolean submitted as a tag id
+            - A tag exists with id 1
+        WHEN:
+            - API PATCH request is made setting the document's tags to [true]
+        THEN:
+            - A normal 400 validation error is returned
+            - The document is not silently given tag id 1 (`True == 1`)
+        """
+        # Explicit pk, not TagFactory()'s auto-assigned id: Postgres sequences
+        # aren't rolled back between tests in the same TestCase (only the
+        # rows are), so relying on this being the first tag created would be
+        # order-dependent.
+        Tag.objects.create(name="t", pk=1)
+        doc = Document.objects.create(
+            title="none",
+            checksum="123",
+            mime_type="application/pdf",
+        )
+
+        response = self.client.patch(
+            f"/api/documents/{doc.pk}/",
+            {"tags": [True]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        doc.refresh_from_db()
+        self.assertEqual(doc.tags.count(), 0)
+
+    def test_document_update_tags_rejects_non_numeric_id(self) -> None:
+        """
+        GIVEN:
+            - A document is being updated with a non-numeric tag id
+        WHEN:
+            - API PATCH request is made setting the document's tags
+        THEN:
+            - A normal 400 validation error is returned
+        """
+        doc = Document.objects.create(
+            title="none",
+            checksum="123",
+            mime_type="application/pdf",
+        )
+
+        response = self.client.patch(
+            f"/api/documents/{doc.pk}/",
+            {"tags": ["not-a-number"]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_document_update_tags_rejects_non_list(self) -> None:
+        """
+        GIVEN:
+            - A document is being updated
+        WHEN:
+            - API PATCH request is made with a non-list value for tags
+        THEN:
+            - A normal 400 validation error is returned
+        """
+        doc = Document.objects.create(
+            title="none",
+            checksum="123",
+            mime_type="application/pdf",
+        )
+
+        response = self.client.patch(
+            f"/api/documents/{doc.pk}/",
+            {"tags": "not-a-list"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_document_update_legacy_created_format(self) -> None:
         """
         GIVEN:
