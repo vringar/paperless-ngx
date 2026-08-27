@@ -634,6 +634,7 @@ class TestFulltextSimilarDocuments:
             - At most 2 results are returned
         """
         source = DocumentFactory.create(content="shared overlapping keyword text")
+        fulltext_backend.add_or_update(source)
         for _ in range(4):
             fulltext_backend.add_or_update(
                 DocumentFactory.create(content="shared overlapping keyword text"),
@@ -641,7 +642,7 @@ class TestFulltextSimilarDocuments:
 
         result = _fulltext_similar_documents(source, user=None, top_k=2)
 
-        assert len(result) <= 2
+        assert len(result) == 2
 
     def test_result_shape_is_similar_document(
         self,
