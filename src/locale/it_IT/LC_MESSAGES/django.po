@@ -2,8 +2,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: paperless-ngx\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-26 16:49+0000\n"
-"PO-Revision-Date: 2026-08-26 17:04\n"
+"POT-Creation-Date: 2026-08-28 23:08+0000\n"
+"PO-Revision-Date: 2026-08-28 23:09\n"
 "Last-Translator: \n"
 "Language-Team: Italian\n"
 "Language: it_IT\n"
@@ -878,7 +878,7 @@ msgstr "Elimina in blocco"
 
 #: documents/models.py:769
 msgid "Apply AI Suggestions"
-msgstr ""
+msgstr "Applica Suggerimenti IA"
 
 #: documents/models.py:778 documents/models.py:1349
 msgid "Scheduled"
@@ -1379,23 +1379,23 @@ msgstr "Sposta nel cestino"
 
 #: documents/models.py:1676
 msgid "Remote OCR"
-msgstr ""
+msgstr "OCR Remoto"
 
 #: documents/models.py:1680
 msgid "Apply AI suggestions"
-msgstr ""
+msgstr "Applica suggerimenti IA"
 
 #: documents/models.py:1687
 msgid "Document type"
-msgstr ""
+msgstr "Tipo di documento"
 
 #: documents/models.py:1688
 msgid "Storage path"
-msgstr ""
+msgstr "Percorso di archiviazione"
 
 #: documents/models.py:1689
 msgid "Created date"
-msgstr ""
+msgstr "Data di creazione"
 
 #: documents/models.py:1692
 msgid "Workflow Action Type"
@@ -1548,7 +1548,7 @@ msgstr "Password da provare quando si rimuove la protezione PDF. Separare con vi
 
 #: documents/models.py:1929
 msgid "AI suggestion fields"
-msgstr ""
+msgstr "Campi di suggerimento IA"
 
 #: documents/models.py:1933
 msgid "Which of the AI-suggested fields to apply to the document."
@@ -1612,7 +1612,7 @@ msgstr "esecuzioni del flusso di lavoro"
 
 #: documents/serialisers.py:523 documents/serialisers.py:875
 #: documents/serialisers.py:2827 documents/views.py:312 documents/views.py:2606
-#: paperless_mail/serialisers.py:155
+#: paperless_mail/serialisers.py:156
 msgid "Insufficient permissions."
 msgstr "Autorizzazioni insufficienti."
 
